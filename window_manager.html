@@ -329,6 +329,13 @@
         let smoothPos = { left: null, right: null };
         let smoothPoint = { left: null, right: null };
 
+        // Gesture state stabilization (counters for hysteresis)
+        let gestureState = {
+            left: { pinch: 0, middlePinch: 0 },
+            right: { pinch: 0, middlePinch: 0 }
+        };
+        const GESTURE_THRESHOLD = 2; // Frames to confirm a gesture change
+
         // --- HAND TRACKING ---
         const hands = new Hands({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -397,17 +404,27 @@
                     
                     const isOpen = isHandOpen(lm);
                     const ist = isFist(lm);
+
+                    // Stabilize gestures (Pinch Hysteresis)
+                    if (isPinching) gestureState[side].pinch = Math.min(gestureState[side].pinch + 1, GESTURE_THRESHOLD + 1);
+                    else gestureState[side].pinch = Math.max(gestureState[side].pinch - 1, 0);
+
+                    if (isMiddlePinching) gestureState[side].middlePinch = Math.min(gestureState[side].middlePinch + 1, GESTURE_THRESHOLD + 1);
+                    else gestureState[side].middlePinch = Math.max(gestureState[side].middlePinch - 1, 0);
+
+                    const pinchStable = gestureState[side].pinch >= GESTURE_THRESHOLD;
+                    const mPinchStable = gestureState[side].middlePinch >= GESTURE_THRESHOLD;
                     
                     const pinchPos = toScreen((thumb.x + index.x) / 2, (thumb.y + index.y) / 2);
                     const mPinchPos = toScreen((thumb.x + middle.x) / 2, (thumb.y + middle.y) / 2);
                     const palmPos = toScreen(palm.x, palm.y);
                     const indexTip = toScreen(index.x, index.y);
 
-                    // Marker (ball) follows pinch if active, otherwise follows open palm/fist
-                    const targetPos = (isPinching || isMiddlePinching) ? (isPinching ? pinchPos : mPinchPos) : ((isOpen || ist) ? palmPos : pinchPos);
+                    // Marker (ball) follows stable pinch if active, otherwise follows open palm/fist
+                    const targetPos = (pinchStable || mPinchStable) ? (pinchStable ? pinchPos : mPinchPos) : ((isOpen || ist) ? palmPos : pinchPos);
                     
-                    // Virtual Cursor (focus point) follows the active pinch center exactly
-                    const targetPoint = isPinching ? pinchPos : (isMiddlePinching ? mPinchPos : indexTip);
+                    // Virtual Cursor (focus point) follows the stable pinch center exactly
+                    const targetPoint = pinchStable ? pinchPos : (mPinchStable ? mPinchPos : indexTip);
 
                     // Apply Smoothing (Low Pass Filter)
                     if (!smoothPos[side]) {
@@ -423,8 +440,8 @@
                     handData[side] = { 
                         pos: { ...smoothPos[side] }, 
                         pointPos: { ...smoothPoint[side] }, 
-                        pinching: isPinching,
-                        middlePinching: isMiddlePinching,
+                        pinching: pinchStable, // Use stable state for interaction logic
+                        middlePinching: mPinchStable,
                         pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
                         isOpen: isOpen,
                         isFist: ist,
@@ -437,15 +454,23 @@
                     }
                     // No progress ring needed for right hand — both actions are instant
 
-                    drawHandMarker(handData[side].pos, isPinching || isMiddlePinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
+                    drawHandMarker(handData[side].pos, handData[side].pinching || handData[side].middlePinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
                 });
 
-                // Reset smoothing for hands not found in this frame
-                if (!foundSides.has('left')) { smoothPos.left = null; smoothPoint.left = null; }
-                if (!foundSides.has('right')) { smoothPos.right = null; smoothPoint.right = null; }
+                // Reset smoothing and gesture state for hands not found in this frame
+                if (!foundSides.has('left')) { 
+                    smoothPos.left = null; smoothPoint.left = null;
+                    gestureState.left.pinch = 0; gestureState.left.middlePinch = 0;
+                }
+                if (!foundSides.has('right')) { 
+                    smoothPos.right = null; smoothPoint.right = null;
+                    gestureState.right.pinch = 0; gestureState.right.middlePinch = 0;
+                }
             } else {
                 smoothPos.left = null; smoothPoint.left = null;
                 smoothPos.right = null; smoothPoint.right = null;
+                gestureState.left.pinch = 0; gestureState.left.middlePinch = 0;
+                gestureState.right.pinch = 0; gestureState.right.middlePinch = 0;
             }
 
 
