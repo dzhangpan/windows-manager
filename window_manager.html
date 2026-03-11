@@ -690,9 +690,18 @@
                 // === THUMB+INDEX: Instant Tap/Click (fires on release edge) ===
                 if (hR.pinching) {
                     virtualCursor.classList.add('clicking');
+                    if (!wasIndexPinching) {
+                        // Pinch just started - Check for dock icons for instant restore
+                        const el = document.elementFromPoint(hR.pointPos.x, hR.pointPos.y);
+                        if (el && el.classList.contains('dock-icon')) {
+                            const targetId = el.id.replace('dock-icon-', '');
+                            restoreWindow(targetId);
+                            lastClickTime = Date.now(); // Prevent double click on release
+                        }
+                    }
                 }
                 if (!hR.pinching && wasIndexPinching) {
-                    // Index pinch just released — fire a tap
+                    // Index pinch just released — fire a standard tap
                     if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE' && menuState === 'CLOSED') {
                         simulateClick(hR.pointPos.x, hR.pointPos.y);
                         lastClickTime = Date.now();
@@ -705,7 +714,7 @@
                 if (hR.middlePinching && !wasMiddlePinching && menuState === 'CLOSED') {
                     // Middle pinch just started — open menu if over a frame
                     if (creationState === 'IDLE') {
-                        const hitFrame = frames.find(f => hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
+                        const hitFrame = frames.find(f => !f.isMinimized && hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
                         if (hitFrame) {
                             menuState = 'OPEN';
                             activeMenuFrameId = hitFrame.id;
@@ -802,7 +811,7 @@
                 if (creationState === 'IDLE' && menuState === 'CLOSED') {
                     const hitFrame = (movingFrameId || resizingFrameId) 
                         ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
-                        : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
+                        : frames.find(f => !f.isMinimized && hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
                     
                     if (hitFrame) {
                         if (hL.pinching) {
