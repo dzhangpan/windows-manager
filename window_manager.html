@@ -103,10 +103,8 @@
             position: fixed;
             z-index: 15;
             pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 20px;
+            width: 0;
+            height: 0;
             opacity: 0;
             transform: scale(0.5);
             transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -118,6 +116,9 @@
         }
 
         .bubble {
+            position: absolute;
+            left: -30px;
+            top: -30px;
             width: 60px;
             height: 60px;
             border-radius: 50%;
@@ -129,13 +130,12 @@
             align-items: center;
             font-size: 24px;
             transition: all 0.3s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-            position: relative;
         }
 
-        #bubble-google { transform: translateY(-40px); }
-        #bubble-youtube { transform: translateY(40px); }
-        #bubble-minimize { transform: translateX(-40px); }
-        #bubble-close { transform: translateX(40px); border-color: #ff3b30; color: #ff3b30; }
+        #bubble-google { transform: translateY(-80px); }
+        #bubble-youtube { transform: translateY(80px); }
+        #bubble-minimize { transform: translateX(-80px); }
+        #bubble-close { transform: translateX(80px); border-color: #ff3b30; color: #ff3b30; }
 
         .bubble.active {
             background: rgba(0, 242, 255, 0.8);
@@ -157,15 +157,12 @@
             width: 68px; /* bubble width(60) + border(4*2) */
             height: 68px;
             border-radius: 50%;
-            border: 3px solid transparent;
             pointer-events: none;
             opacity: 0;
             transition: opacity 0.2s;
-        }
-
-        #bubble-close .progress-ring {
-            border-color: #ff3b30;
-            clip-path: polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0);
+            background: conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg);
+            mask: radial-gradient(transparent 31px, black 32px);
+            -webkit-mask: radial-gradient(transparent 31px, black 32px);
         }
 
         .bubble.progressing .progress-ring {
@@ -224,11 +221,12 @@
         .bubble::after {
             content: attr(data-label);
             position: absolute;
-            left: 75px;
-            font-size: 12px;
+            top: -20px;
+            font-size: 10px;
             text-transform: uppercase;
             letter-spacing: 2px;
             opacity: 0.7;
+            white-space: nowrap;
         }
 
         /* Virtual Cursors */
@@ -428,6 +426,10 @@
         let activeMenuFrameId = null;
         let menuSelection = null; 
         let menuStartPos = null;
+
+        let isHoldingDelete = false;
+        let deleteHoldStart = 0;
+        const DELETE_HOLD_DURATION = 1000;
 
         let holdTimerL = 0; 
         let movingFrameId = null;
@@ -714,12 +716,12 @@
                     let newSelection = null;
                     if (Math.abs(dy) > Math.abs(dx)) {
                         // Vertical movement
-                        if (dy < -40) newSelection = 'google';
-                        else if (dy > 40) newSelection = 'youtube';
+                        if (dy < -60) newSelection = 'google';
+                        else if (dy > 60) newSelection = 'youtube';
                     } else {
                         // Horizontal movement
-                        if (dx < -40) newSelection = 'minimize';
-                        else if (dx > 40) newSelection = 'close';
+                        if (dx < -60) newSelection = 'minimize';
+                        else if (dx > 60) newSelection = 'close';
                     }
 
                     if (newSelection !== menuSelection) {
@@ -729,7 +731,7 @@
                         // Reset delete hold if we changed selection
                         isHoldingDelete = false;
                         bubbles.close.classList.remove('progressing');
-                        bubbles.close.querySelector('.progress-ring').style.clipPath = 'polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0)';
+                        bubbles.close.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
                     }
                     
                     // Handle 1-second hold for Delete
@@ -741,7 +743,7 @@
                         } else {
                             const holdTime = Date.now() - deleteHoldStart;
                             const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
-                            updateProgressRing(progress);
+                            bubbles.close.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
                             
                             if (progress >= 1) {
                                 deleteWindow(activeMenuFrameId);
