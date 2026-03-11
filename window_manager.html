@@ -219,7 +219,7 @@
     <div id="gesture-hud" class="hud-hint">
         PINCH BOTH HANDS TO CREATE FRAME<br>
         LEFT FIST (5s) TO CLOSE | LEFT PINCH (2s) TO MOVE<br>
-        RIGHT PINCH (2s) FOR MENU | QUICK PINCH TO CLICK
+        RIGHT THUMB+INDEX = TAP | RIGHT THUMB+MIDDLE = MENU
     </div>
 
     <div class="security-note">
@@ -298,16 +298,17 @@
         let menuStartPos = null;
 
         let holdTimerL = 0; 
-        let holdTimerR = 0;
         let movingFrameId = null;
         let moveOffset = { x: 0, y: 0 };
 
         const TICK_RATE = 30;
         const HOLD_MOVE = 2 * TICK_RATE; 
-        const HOLD_MENU = 1 * TICK_RATE;
         const HOLD_CLOSE = 5 * TICK_RATE;
-        const CLICK_MAX_TIME = 0.5 * TICK_RATE;
 
+        /** @description Edge detection for instant tap (fires on release) */
+        let wasIndexPinching = false;
+        /** @description Edge detection for menu (fires on press) */
+        let wasMiddlePinching = false;
         let lastClickTime = 0;
         const CLICK_COOLDOWN = 300;
 
@@ -368,10 +369,16 @@
 
                     const thumb = lm[4];
                     const index = lm[8];
+                    const middle = lm[12];
                     const palm = lm[9]; 
                     
-                    const d = getDist(thumb, index);
-                    const isPinching = d < PINCH_DIST;
+                    // Thumb+Index = tap/click
+                    const dIndex = getDist(thumb, index);
+                    const isPinching = dIndex < PINCH_DIST;
+                    // Thumb+Middle = menu (Apple-style separate action)
+                    const dMiddle = getDist(thumb, middle);
+                    const isMiddlePinching = dMiddle < PINCH_DIST;
+                    
                     const isOpen = isHandOpen(lm);
                     const ist = isFist(lm);
                     
@@ -382,8 +389,9 @@
                     handData[side] = { 
                         pos: (isOpen || ist) ? palmPos : pinchPos, 
                         pointPos: pointPos, 
-                        pinching: isPinching, 
-                        pinchAmount: 1 - Math.min(d/PINCH_DIST, 1),
+                        pinching: isPinching,
+                        middlePinching: isMiddlePinching,
+                        pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
                         isOpen: isOpen,
                         isFist: ist,
                         lm: lm 
@@ -393,11 +401,10 @@
                     if (side === 'left') {
                         if (isPinching) progress = holdTimerL / HOLD_MOVE;
                         else if (ist) progress = holdTimerL / HOLD_CLOSE;
-                    } else {
-                        if (isPinching && menuState === 'CLOSED') progress = holdTimerR / HOLD_MENU;
                     }
+                    // No progress ring needed for right hand — both actions are instant
 
-                    drawHandMarker(handData[side].pos, isPinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
+                    drawHandMarker(handData[side].pos, isPinching || isMiddlePinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
                 });
             }
 
@@ -436,49 +443,60 @@
             const hL = hands.left;
             const hR = hands.right;
 
-            // --- RIGHT HAND: CURSOR, CLICK, MENU ---
+            // --- RIGHT HAND: CURSOR, TAP (thumb+index), MENU (thumb+middle) ---
             if (hR) {
                 virtualCursor.style.display = 'block';
                 virtualCursor.style.left = (hR.pointPos.x - 10) + 'px';
                 virtualCursor.style.top = (hR.pointPos.y - 10) + 'px';
                 
+                // === THUMB+INDEX: Instant Tap/Click (fires on release edge) ===
                 if (hR.pinching) {
-                    holdTimerR++;
                     virtualCursor.classList.add('clicking');
-                    if (menuState === 'CLOSED' && holdTimerR > HOLD_MENU && creationState === 'IDLE') {
+                }
+                if (!hR.pinching && wasIndexPinching) {
+                    // Index pinch just released — fire a tap
+                    if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE' && menuState === 'CLOSED') {
+                        simulateClick(hR.pointPos.x, hR.pointPos.y);
+                        lastClickTime = Date.now();
+                    }
+                    virtualCursor.classList.remove('clicking');
+                }
+                wasIndexPinching = hR.pinching;
+
+                // === THUMB+MIDDLE: Menu (fires on press edge, navigates while held) ===
+                if (hR.middlePinching && !wasMiddlePinching && menuState === 'CLOSED') {
+                    // Middle pinch just started — open menu if over a frame
+                    if (creationState === 'IDLE') {
                         const hitFrame = frames.find(f => hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
                         if (hitFrame) {
                             menuState = 'OPEN';
                             activeMenuFrameId = hitFrame.id;
                             menuStartPos = { ...hR.pos };
                             showMenu(hR.pos);
-                            holdTimerR = 0;
-                        }
-                    } else if (menuState === 'OPEN') {
-                        const dy = hR.pos.y - menuStartPos.y;
-                        if (dy < -40) menuSelection = 'google';
-                        else if (dy > 40) menuSelection = 'youtube';
-                        else menuSelection = null;
-                        updateMenuVisuals();
-                    }
-                } else {
-                    if (menuState === 'OPEN') {
-                        if (menuSelection) loadContent(activeMenuFrameId, menuSelection);
-                        hideMenu();
-                        menuState = 'CLOSED';
-                        menuSelection = null;
-                    } else if (holdTimerR > 0 && holdTimerR < CLICK_MAX_TIME) {
-                        if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE') {
-                            simulateClick(hR.pointPos.x, hR.pointPos.y);
-                            lastClickTime = Date.now();
                         }
                     }
-                    holdTimerR = 0;
-                    virtualCursor.classList.remove('clicking');
                 }
+                if (hR.middlePinching && menuState === 'OPEN') {
+                    // While holding middle pinch — navigate selection
+                    const dy = hR.pos.y - menuStartPos.y;
+                    if (dy < -40) menuSelection = 'google';
+                    else if (dy > 40) menuSelection = 'youtube';
+                    else menuSelection = null;
+                    updateMenuVisuals();
+                }
+                if (!hR.middlePinching && wasMiddlePinching && menuState === 'OPEN') {
+                    // Middle pinch released — confirm selection
+                    if (menuSelection) loadContent(activeMenuFrameId, menuSelection);
+                    hideMenu();
+                    menuState = 'CLOSED';
+                    menuSelection = null;
+                }
+                wasMiddlePinching = hR.middlePinching;
+
             } else {
                 virtualCursor.style.display = 'none';
-                holdTimerR = 0;
+                wasIndexPinching = false;
+                wasMiddlePinching = false;
                 if (menuState === 'OPEN') {
                     hideMenu();
                     menuState = 'CLOSED';
