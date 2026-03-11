@@ -334,7 +334,8 @@
             left: { pinch: 0, middlePinch: 0, open: 0, fist: 0 },
             right: { pinch: 0, middlePinch: 0, open: 0, fist: 0 }
         };
-        const GESTURE_THRESHOLD = 2; // Frames to confirm a gesture change
+        const GESTURE_THRESHOLD = 3; // Frames to confirm a gesture change (increased for 2/10 glitch fix)
+        const RELEASE_HYSTERESIS = 2; // Extra frames of "stickiness" when releasing a pinch
 
         // --- HAND TRACKING ---
         const hands = new Hands({
@@ -430,11 +431,13 @@
 
                     // --- TARGET LOGIC REFINEMENT ---
                     // Virtual Cursor (focus point) follows the stable pinch center exactly
-                    const targetPoint = pinchStable ? pinchPos : (mPinchStable ? mPinchPos : indexTip);
+                    const targetPoint = (gestureState[side].pinch >= GESTURE_THRESHOLD - 1) ? pinchPos : 
+                                        (gestureState[side].middlePinch >= GESTURE_THRESHOLD - 1 ? mPinchPos : indexTip);
                     
-                    // Marker (ball) target - Suppress palm ball if manipulation is even partially active
+                    // Marker (ball) target - Strictly suppress palm ball if manipulation is even partially active
+                    // We lock the ball to the finger tip much sooner than the pinch is confirmed to prevent "knuckle jumping"
                     const isManipulationActive = gestureState[side].pinch > 0 || gestureState[side].middlePinch > 0;
-                    const targetPos = isManipulationActive ? targetPoint : (openStable || fistStable ? palmPos : indexTip);
+                    const targetPos = isManipulationActive ? targetPoint : (openStable || fistStable ? palmPos : targetPoint);
 
                     // Apply Smoothing (Low Pass Filter)
                     if (!smoothPos[side]) {
@@ -455,7 +458,7 @@
                         pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
                         isOpen: openStable,
                         isFist: fistStable,
-                        isManipulationMode: isManipulationActive,
+                        isManipulationMode: isManipulationActive, // Used for suppressing the ball
                         lm: lm 
                     };
 
@@ -494,9 +497,9 @@
             drawUI();
         }
 
-        function drawHandMarker(pos, pinching, isRight, amount, isOpen, ist, progress) {
-            // Hide the large glowing "ball" when pinching with tucked fingers to reduce clutter
-            if (pinching && !isOpen) return;
+        function drawHandMarker(pos, isManipulation, isRight, amount, isOpen, ist, progress) {
+            // Strictly hide the large glowing "ball" during manipulation to prevent flickering/confusion
+            if (isManipulation) return;
 
             const color = isRight ? '0, 242, 255' : '188, 19, 254';
             ctx.shadowBlur = 15;
