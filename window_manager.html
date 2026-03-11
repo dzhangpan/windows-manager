@@ -10,6 +10,8 @@
             --glass-border: rgba(255, 255, 255, 0.2);
             --neon-blue: #00f2ff;
             --neon-purple: #bc13fe;
+            --danger: #ff3b30;
+            --mac-bg: rgba(30, 30, 30, 0.9);
         }
 
         * {
@@ -350,18 +352,6 @@
         NOTE: INTERACTION WITH EXTERNAL SITES REQUIRES CHROME FLAG --DISABLE-WEB-SECURITY.
     </div>
 
-    <div id="menu-container" class="bubble-menu">
-        <div class="bubble" data-label="Google" id="bubble-google">G</div>
-        <div class="bubble" data-label="YouTube" id="bubble-youtube">Y</div>
-        <div class="bubble" data-label="Minimize" id="bubble-minimize">-</div>
-        <div class="bubble" data-label="Close" id="bubble-close">
-            X
-            <div class="progress-ring"></div>
-        </div>
-    </div>
-
-    <div id="minimize-dock"></div>
-
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -597,19 +587,14 @@
                         pointPos: { ...smoothPoint[side] }, 
                         pinching: pinchStable, 
                         middlePinching: mPinchStable,
-                        pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
+                        pinchAmount: 1 - Math.min(dIndex / PINCH_DIST, 1),
                         isOpen: openStable,
                         isFist: fistStable,
-                        isManipulationMode: isManipulationActive, // Used for suppressing the ball
+                        isManipulationMode: isManipulationActive,
                         lm: lm 
                     };
 
-                    let progress = 0;
-                    if (side === 'left') {
-                        if (fistStable) progress = holdTimerL / HOLD_CLOSE;
-                    }
-
-                    drawHandMarker(handData[side].pos, handData[side].isManipulationMode, isRight, handData[side].pinchAmount, openStable, fistStable, progress);
+                    drawHandMarker(handData[side], isRight, progress);
                 });
 
                 // Update Debug HUD
@@ -647,188 +632,59 @@
             drawUI();
         }
 
-        function drawHandMarker(pos, isManipulation, isRight, amount, isOpen, ist, progress) {
-            // Strictly hide the large glowing "ball" during manipulation to prevent flickering/confusion
-            if (isManipulation) return;
+        /**
+         * @description Draws the holographic marker ball or persistence ring for a hand.
+         * @param {Object} h Hand data object
+         * @param {boolean} isRight Whether it is the right hand
+         * @param {number} progress Progress 0-1 for the hold timer (left hand only)
+         */
+        function drawHandMarker(h, isRight, progress) {
+            if (h.isManipulationMode) return;
 
+            const { pos, pinchAmount, isOpen, isFist } = h;
             const color = isRight ? '0, 242, 255' : '188, 19, 254';
+            
             ctx.shadowBlur = 15;
-            ctx.shadowColor = `rgba(${color}, ${0.5 + amount * 0.5})`;
+            ctx.shadowColor = `rgba(${color}, ${0.5 + pinchAmount * 0.5})`;
             
             if (progress > 0 && progress < 1.05) {
                 ctx.beginPath();
-                ctx.arc(pos.x, pos.y, 40, -Math.PI/2, -Math.PI/2 + (Math.PI * 2 * Math.min(progress, 1)));
+                ctx.arc(pos.x, pos.y, 40, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * Math.min(progress, 1)));
                 ctx.strokeStyle = `rgba(${color}, 1)`;
                 ctx.lineWidth = 4;
                 ctx.stroke();
             }
 
             ctx.beginPath();
-            let radius = (isOpen ? 22 : (ist ? 25 : 12)) + amount * 6;
+            const radius = (isOpen ? 22 : (isFist ? 25 : 12)) + pinchAmount * 6;
             ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = (isOpen || ist) ? `rgba(${color}, 0.8)` : `rgba(255, 255, 255, ${0.3 + amount * 0.7})`;
+            ctx.strokeStyle = (isOpen || isFist) ? `rgba(${color}, 0.8)` : `rgba(255, 255, 255, ${0.3 + pinchAmount * 0.7})`;
             ctx.lineWidth = 2;
             ctx.stroke();
             
-            if (ist) {
-                ctx.fillStyle = `rgba(${color}, ${0.4 + amount * 0.4})`;
+            if (isFist) {
+                ctx.fillStyle = `rgba(${color}, ${0.4 + pinchAmount * 0.4})`;
                 ctx.fill();
             }
             ctx.shadowBlur = 0;
         }
 
+        /**
+         * @description Central gesture processor. Orchestrates right-hand interaction and left-hand management.
+         * @param {Object} hands Combined hand data
+         */
         function processGestures(hands) {
-            const hL = hands.left;
-            const hR = hands.right;
+            handleRightHand(hands.right);
+            handleLeftHand(hands.left);
+            handleDoubleHandGestures(hands.left, hands.right);
+        }
 
-            // --- RIGHT HAND: CURSOR, TAP (thumb+index), MENU (thumb+middle) ---
-            if (hR) {
-                virtualCursor.style.display = 'block';
-                virtualCursor.style.left = (hR.pointPos.x - 10) + 'px';
-                virtualCursor.style.top = (hR.pointPos.y - 10) + 'px';
-                
-                // === THUMB+INDEX: Instant Tap/Click (fires on release edge) ===
-                if (hR.pinching) {
-                    virtualCursor.classList.add('clicking');
-                    if (!wasIndexPinching) {
-                        // Pinch just started - Check for dock icons for instant restore
-                        const el = document.elementFromPoint(hR.pointPos.x, hR.pointPos.y);
-                        if (el && el.classList.contains('dock-icon')) {
-                            const targetId = el.id.replace('dock-icon-', '');
-                            restoreWindow(targetId);
-                            lastClickTime = Date.now(); // Prevent double click on release
-                        }
-                    }
-                }
-                if (!hR.pinching && wasIndexPinching) {
-                    // Index pinch just released — fire a standard tap
-                    if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE' && menuState === 'CLOSED') {
-                        simulateClick(hR.pointPos.x, hR.pointPos.y);
-                        lastClickTime = Date.now();
-                    }
-                    virtualCursor.classList.remove('clicking');
-                }
-                wasIndexPinching = hR.pinching;
-
-                // === THUMB+MIDDLE: Menu (fires on press edge, navigates while held) ===
-                if (hR.middlePinching && !wasMiddlePinching && menuState === 'CLOSED') {
-                    // Middle pinch just started — open ROOT menu if over a frame
-                    if (creationState === 'IDLE') {
-                        const hitFrame = frames.find(f => !f.isMinimized && hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
-                        if (hitFrame) {
-                            menuState = 'ROOT';
-                            activeMenuFrameId = hitFrame.id;
-                            menuStartPos = { ...hR.pos };
-                            updateMenuLabels();
-                            showMenu(hR.pos);
-                            bubbles.right.style.borderColor = '#ff3b30';
-                            bubbles.right.style.color = '#ff3b30';
-                        }
-                    }
-                }
-                if (hR.middlePinching && menuState !== 'CLOSED') {
-                    // While holding middle pinch — navigate selection
-                    const dx = hR.pos.x - menuStartPos.x;
-                    const dy = hR.pos.y - menuStartPos.y;
-                    
-                    let newSelection = null;
-                    if (Math.abs(dy) > Math.abs(dx)) {
-                        // Vertical movement
-                        if (dy < -60) newSelection = 'top';
-                        else if (dy > 60) newSelection = 'bottom';
-                    } else {
-                        // Horizontal movement
-                        if (dx < -60) newSelection = 'left';
-                        else if (dx > 60) newSelection = 'right';
-                    }
-
-                    // Handle Immediate Transition to Submenus while Dragging
-                    let didTransition = false;
-                    if (newSelection) {
-                        if (menuState === 'ROOT') {
-                            if (newSelection === 'top') { menuState = 'SEARCHES'; didTransition = true; }
-                            else if (newSelection === 'bottom') { menuState = 'APPS'; didTransition = true; }
-                        } else if (menuState === 'APPS') {
-                            if (newSelection === 'top') { menuState = 'ROOT'; didTransition = true; }
-                        } else if (menuState === 'SEARCHES') {
-                            if (newSelection === 'bottom') { menuState = 'ROOT'; didTransition = true; }
-                        }
-                        
-                        if (didTransition) {
-                            // Re-anchor the menu to prevent double-triggering and allow continuous swipe
-                            menuStartPos = { ...hR.pos };
-                            menuSelection = null;
-                            newSelection = null;
-                            updateMenuLabels();
-                            updateMenuVisuals();
-                            showMenu(hR.pos); // Snaps the UI to the current hand position
-                            isHoldingDelete = false; // Reset delete if transitioning
-                        }
-                    }
-
-                    if (!didTransition) {
-                        // Special case for SEARCHES menu right bubble (empty)
-                        if (menuState === 'SEARCHES' && newSelection === 'right') {
-                            newSelection = null;
-                        }
-
-                        if (newSelection !== menuSelection) {
-                            menuSelection = newSelection;
-                            updateMenuVisuals();
-                            
-                            // Reset delete hold if we changed selection
-                            isHoldingDelete = false;
-                            const ring = bubbles.right.querySelector('.progress-ring');
-                            if (ring) {
-                                ring.style.background = 'transparent';
-                                ring.style.clipPath = 'polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0)';
-                            }
-                        }
-                        
-                        // Handle 1-second hold for Delete (only in ROOT menu on Right selection)
-                        if (menuState === 'ROOT' && menuSelection === 'right') {
-                            if (!isHoldingDelete) {
-                                isHoldingDelete = true;
-                                deleteHoldStart = Date.now();
-                            } else {
-                                const holdTime = Date.now() - deleteHoldStart;
-                                const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
-                                updateProgressRing(progress);
-                                
-                                if (progress >= 1) {
-                                    deleteWindow(activeMenuFrameId);
-                                    hideMenu();
-                                    menuState = 'CLOSED';
-                                    menuSelection = null;
-                                    isHoldingDelete = false;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (!hR.middlePinching && wasMiddlePinching && menuState !== 'CLOSED') {
-                    // Middle pinch released — Execute Selection
-                    if (menuSelection && !(menuState === 'ROOT' && menuSelection === 'right')) {
-                        if (menuState === 'ROOT') {
-                            if (menuSelection === 'left') minimizeWindow(activeMenuFrameId);
-                        } else if (menuState === 'APPS') {
-                            if (menuSelection === 'bottom') loadContent(activeMenuFrameId, 'instagram');
-                            else if (menuSelection === 'left') loadContent(activeMenuFrameId, 'youtube');
-                            else if (menuSelection === 'right') loadContent(activeMenuFrameId, 'tiktok');
-                        } else if (menuState === 'SEARCHES') {
-                            if (menuSelection === 'top') loadContent(activeMenuFrameId, 'google');
-                            else if (menuSelection === 'left') loadContent(activeMenuFrameId, 'finder');
-                        }
-                    }
-                    
-                    hideMenu();
-                    menuState = 'CLOSED';
-                    menuSelection = null;
-                    isHoldingDelete = false;
-                }
-                wasMiddlePinching = hR.middlePinching;
-
-            } else {
+        /**
+         * @description Handles cursor, clicks, and menus for the right hand.
+         * @param {Object} hR Right hand data
+         */
+        function handleRightHand(hR) {
+            if (!hR) {
                 virtualCursor.style.display = 'none';
                 wasIndexPinching = false;
                 wasMiddlePinching = false;
@@ -837,72 +693,168 @@
                     menuState = 'CLOSED';
                     menuSelection = null;
                 }
+                return;
             }
-            // --- LEFT HAND: MOVE, RESIZE ---
-            if (hL) {
-                virtualCursorLeft.style.display = 'block';
-                virtualCursorLeft.style.left = (hL.pointPos.x - 10) + 'px';
-                virtualCursorLeft.style.top = (hL.pointPos.y - 10) + 'px';
-                
-                if (hL.pinching || hL.middlePinching) {
-                    virtualCursorLeft.classList.add('clicking');
-                } else {
-                    virtualCursorLeft.classList.remove('clicking');
-                }
 
-                if (creationState === 'IDLE' && menuState === 'CLOSED') {
-                    const hitFrame = (movingFrameId || resizingFrameId) 
-                        ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
-                        : frames.find(f => !f.isMinimized && hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
-                    
-                    if (hitFrame) {
-                        if (hL.pinching) {
-                            // THUMB + INDEX = MOVE
-                            if (!movingFrameId && !resizingFrameId) {
-                                movingFrameId = hitFrame.id;
-                                moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
-                            } else if (movingFrameId) {
-                                hitFrame.x = hL.pos.x + moveOffset.x;
-                                hitFrame.y = hL.pos.y + moveOffset.y;
-                                const el = document.getElementById(hitFrame.id);
-                                if (el) {
-                                    el.style.left = hitFrame.x + 'px';
-                                    el.style.top = hitFrame.y + 'px';
-                                }
-                            }
-                        } else if (hL.middlePinching) {
-                            // THUMB + MIDDLE = RESIZE
-                            if (!movingFrameId && !resizingFrameId) {
-                                resizingFrameId = hitFrame.id;
-                                const el = document.getElementById(hitFrame.id);
-                                if (el) el.classList.add('resizing');
-                            } else if (resizingFrameId) {
-                                hitFrame.w = Math.max(200, hL.pos.x - hitFrame.x);
-                                hitFrame.h = Math.max(150, hL.pos.y - hitFrame.y);
-                                const el = document.getElementById(hitFrame.id);
-                                if (el) {
-                                    el.style.width = hitFrame.w + 'px';
-                                    el.style.height = hitFrame.h + 'px';
-                                }
-                            }
-                        } else {
-                            if (resizingFrameId) {
-                                const el = document.getElementById(resizingFrameId);
-                                if (el) el.classList.remove('resizing');
-                            }
-                            movingFrameId = null;
-                            resizingFrameId = null;
-                        }
-                    } else {
-                        if (resizingFrameId) {
-                            const el = document.getElementById(resizingFrameId);
-                            if (el) el.classList.remove('resizing');
-                        }
-                        movingFrameId = null;
-                        resizingFrameId = null;
+            virtualCursor.style.display = 'block';
+            virtualCursor.style.left = `${hR.pointPos.x - 10}px`;
+            virtualCursor.style.top = `${hR.pointPos.y - 10}px`;
+            
+            handleRightHandPinch(hR);
+            handleRightHandMenu(hR);
+        }
+
+        function handleRightHandPinch(hR) {
+            if (hR.pinching) {
+                virtualCursor.classList.add('clicking');
+                if (!wasIndexPinching) {
+                    const el = document.elementFromPoint(hR.pointPos.x, hR.pointPos.y);
+                    if (el?.classList.contains('dock-icon')) {
+                        restoreWindow(el.id.replace('dock-icon-', ''));
+                        lastClickTime = Date.now();
                     }
                 }
+            }
+
+            if (!hR.pinching && wasIndexPinching) {
+                const canClick = Date.now() - lastClickTime > CLICK_COOLDOWN && 
+                                 creationState === 'IDLE' && 
+                                 menuState === 'CLOSED';
+                if (canClick) {
+                    simulateClick(hR.pointPos.x, hR.pointPos.y);
+                    lastClickTime = Date.now();
+                }
+                virtualCursor.classList.remove('clicking');
+            }
+            wasIndexPinching = hR.pinching;
+        }
+
+        function handleRightHandMenu(hR) {
+            // Open Menu Triggers
+            if (hR.middlePinching && !wasMiddlePinching && menuState === 'CLOSED' && creationState === 'IDLE') {
+                const hitFrame = frames.find(f => !f.isMinimized && 
+                    hR.pos.x > f.x && hR.pos.x < f.x + f.w && 
+                    hR.pos.y > f.y && hR.pos.y < f.y + f.h);
+                
+                if (hitFrame) {
+                    menuState = 'ROOT';
+                    activeMenuFrameId = hitFrame.id;
+                    menuStartPos = { ...hR.pos };
+                    updateMenuLabels();
+                    showMenu(hR.pos);
+                }
+            }
+
+            if (hR.middlePinching && menuState !== 'CLOSED') {
+                updateMenuInteraction(hR);
+            }
+
+            if (!hR.middlePinching && wasMiddlePinching && menuState !== 'CLOSED') {
+                executeMenuSelection();
+            }
+            wasMiddlePinching = hR.middlePinching;
+        }
+
+        function updateMenuInteraction(hR) {
+            const dx = hR.pos.x - menuStartPos.x;
+            const dy = hR.pos.y - menuStartPos.y;
+            
+            let newSelection = null;
+            if (Math.abs(dy) > Math.abs(dx)) {
+                if (dy < -60) newSelection = 'top';
+                else if (dy > 60) newSelection = 'bottom';
             } else {
+                if (dx < -60) newSelection = 'left';
+                else if (dx > 60) newSelection = 'right';
+            }
+
+            // Continuous Threshold Transitions
+            let didTransition = false;
+            if (newSelection) {
+                if (menuState === 'ROOT') {
+                    if (newSelection === 'top') { menuState = 'SEARCHES'; didTransition = true; }
+                    else if (newSelection === 'bottom') { menuState = 'APPS'; didTransition = true; }
+                } else if (menuState === 'APPS' && newSelection === 'top') {
+                    menuState = 'ROOT'; didTransition = true;
+                } else if (menuState === 'SEARCHES' && newSelection === 'bottom') {
+                    menuState = 'ROOT'; didTransition = true;
+                }
+                
+                if (didTransition) {
+                    menuStartPos = { ...hR.pos };
+                    menuSelection = null;
+                    newSelection = null;
+                    updateMenuLabels();
+                    updateMenuVisuals();
+                    showMenu(hR.pos);
+                    isHoldingDelete = false;
+                    return;
+                }
+            }
+
+            if (menuState === 'SEARCHES' && newSelection === 'right') newSelection = null;
+
+            if (newSelection !== menuSelection) {
+                menuSelection = newSelection;
+                updateMenuVisuals();
+                isHoldingDelete = false;
+                resetProgressRing();
+            }
+            
+            if (menuState === 'ROOT' && menuSelection === 'right') {
+                handleDeleteHold();
+            }
+        }
+
+        function handleDeleteHold() {
+            if (!isHoldingDelete) {
+                isHoldingDelete = true;
+                deleteHoldStart = Date.now();
+            } else {
+                const progress = Math.min((Date.now() - deleteHoldStart) / DELETE_HOLD_DURATION, 1);
+                updateProgressRing(progress);
+                if (progress >= 1) {
+                    deleteWindow(activeMenuFrameId);
+                    hideMenu();
+                    menuState = 'CLOSED';
+                    menuSelection = null;
+                    isHoldingDelete = false;
+                }
+            }
+        }
+
+        function executeMenuSelection() {
+            if (menuSelection && !(menuState === 'ROOT' && menuSelection === 'right')) {
+                if (menuState === 'ROOT') {
+                    if (menuSelection === 'left') minimizeWindow(activeMenuFrameId);
+                } else if (menuState === 'APPS') {
+                    const appMap = { bottom: 'instagram', left: 'youtube', right: 'tiktok' };
+                    if (appMap[menuSelection]) loadContent(activeMenuFrameId, appMap[menuSelection]);
+                } else if (menuState === 'SEARCHES') {
+                    if (menuSelection === 'top') loadContent(activeMenuFrameId, 'google');
+                    else if (menuSelection === 'left') loadContent(activeMenuFrameId, 'finder');
+                }
+            }
+            hideMenu();
+            menuState = 'CLOSED';
+            menuSelection = null;
+            isHoldingDelete = false;
+        }
+
+        function resetProgressRing() {
+            const ring = bubbles.right.querySelector('.progress-ring');
+            if (ring) {
+                ring.style.background = 'transparent';
+                ring.style.clipPath = 'none';
+            }
+        }
+
+        /**
+         * @description Handles window move and resize for the left hand.
+         * @param {Object} hL Left hand data
+         */
+        function handleLeftHand(hL) {
+            if (!hL) {
                 virtualCursorLeft.style.display = 'none';
                 if (resizingFrameId) {
                     const el = document.getElementById(resizingFrameId);
@@ -910,7 +862,64 @@
                 }
                 movingFrameId = null;
                 resizingFrameId = null;
+                return;
             }
+
+            virtualCursorLeft.style.display = 'block';
+            virtualCursorLeft.style.left = `${hL.pointPos.x - 10}px`;
+            virtualCursorLeft.style.top = `${hL.pointPos.y - 10}px`;
+            virtualCursorLeft.classList.toggle('clicking', hL.pinching || hL.middlePinching);
+            
+            if (creationState !== 'IDLE' || menuState !== 'CLOSED') return;
+
+            const hitFrame = (movingFrameId || resizingFrameId) 
+                ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
+                : frames.find(f => !f.isMinimized && hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
+            
+            if (!hitFrame) {
+                document.getElementById(resizingFrameId)?.classList.remove('resizing');
+                movingFrameId = null;
+                resizingFrameId = null;
+                return;
+            }
+
+            if (hL.pinching) {
+                if (!movingFrameId && !resizingFrameId) {
+                    movingFrameId = hitFrame.id;
+                    moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
+                } else if (movingFrameId) {
+                    hitFrame.x = hL.pos.x + moveOffset.x;
+                    hitFrame.y = hL.pos.y + moveOffset.y;
+                    const el = document.getElementById(hitFrame.id);
+                    if (el) {
+                        el.style.left = `${hitFrame.x}px`;
+                        el.style.top = `${hitFrame.y}px`;
+                    }
+                }
+            } else if (hL.middlePinching) {
+                if (!movingFrameId && !resizingFrameId) {
+                    resizingFrameId = hitFrame.id;
+                    document.getElementById(hitFrame.id)?.classList.add('resizing');
+                } else if (resizingFrameId) {
+                    hitFrame.w = Math.max(200, hL.pos.x - hitFrame.x);
+                    hitFrame.h = Math.max(150, hL.pos.y - hitFrame.y);
+                    const el = document.getElementById(hitFrame.id);
+                    if (el) {
+                        el.style.width = `${hitFrame.w}px`;
+                        el.style.height = `${hitFrame.h}px`;
+                    }
+                }
+            } else {
+                document.getElementById(resizingFrameId)?.classList.remove('resizing');
+                movingFrameId = null;
+                resizingFrameId = null;
+            }
+        }
+
+        /**
+         * @description Creation gesture (Both hands pinch and pull).
+         */
+        function handleDoubleHandGestures(hL, hR) {
             if (hL && hR && hL.pinching && hR.pinching && menuState === 'CLOSED' && !movingFrameId) {
                 const centerDist = getDist(hL.pos, hR.pos);
                 if (creationState === 'IDLE' && centerDist < SNAP_DIST) {
@@ -934,60 +943,61 @@
             }
         }
 
+        /**
+         * @description Instantiates a new holographic window frame.
+         * @param {Object} rect Window dimensions and position {x, y, w, h}
+         */
         function createWindow(rect) {
-            const id = 'win-' + Date.now();
+            const id = `win-${Date.now()}`;
             const div = document.createElement('div');
-            div.className = 'window-frame';
-            div.id = id;
-            div.style.left = rect.x + 'px';
-            div.style.top = rect.y + 'px';
-            div.style.width = rect.w + 'px';
-            div.style.height = rect.h + 'px';
+            Object.assign(div, { id, className: 'window-frame' });
+            Object.assign(div.style, {
+                left: `${rect.x}px`,
+                top: `${rect.y}px`,
+                width: `${rect.w}px`,
+                height: `${rect.h}px`
+            });
             
             windowsContainer.appendChild(div);
-            frames.push({ ...rect, id: id });
+            frames.push({ ...rect, id });
         }
 
+        /**
+         * @description Progressively updates menu labels based on sub-menu state.
+         */
         function updateMenuLabels() {
-            // Adjust styles and text based on state machine
-            bubbles.right.style.borderColor = 'var(--glass-border)';
-            bubbles.right.style.color = '#fff';
-            bubbles.right.innerHTML = '';
-            bubbles.right.style.display = 'flex';
-            bubbles.bottom.style.display = 'flex';
-
             const rDOM = '<div class="progress-ring"></div>';
+            const resetBubble = (b) => {
+                b.style.display = 'flex';
+                b.style.borderColor = 'var(--glass-border)';
+                b.style.color = '#fff';
+            };
+
+            [bubbles.top, bubbles.bottom, bubbles.left, bubbles.right].forEach(resetBubble);
 
             if (menuState === 'ROOT') {
-                bubbles.top.setAttribute('data-label', 'Searches');
-                bubbles.top.innerHTML = 'S' + rDOM;
-                bubbles.bottom.setAttribute('data-label', 'Apps');
-                bubbles.bottom.innerHTML = 'A' + rDOM;
-                bubbles.left.setAttribute('data-label', 'Minimize');
-                bubbles.left.innerHTML = '-' + rDOM;
-                bubbles.right.setAttribute('data-label', 'Close');
-                bubbles.right.innerHTML = 'X' + rDOM;
-                bubbles.right.style.borderColor = '#ff3b30';
-                bubbles.right.style.color = '#ff3b30';
+                setBubble(bubbles.top, 'Searches', `S${rDOM}`);
+                setBubble(bubbles.bottom, 'Apps', `A${rDOM}`);
+                setBubble(bubbles.left, 'Minimize', `-${rDOM}`);
+                setBubble(bubbles.right, 'Close', `X${rDOM}`);
+                bubbles.right.style.borderColor = 'var(--danger)';
+                bubbles.right.style.color = 'var(--danger)';
             } else if (menuState === 'APPS') {
-                bubbles.top.setAttribute('data-label', 'Back');
-                bubbles.top.innerHTML = '↑' + rDOM;
-                bubbles.bottom.setAttribute('data-label', 'Instagram');
-                bubbles.bottom.innerHTML = 'I' + rDOM;
-                bubbles.left.setAttribute('data-label', 'YouTube');
-                bubbles.left.innerHTML = 'Y' + rDOM;
-                bubbles.right.setAttribute('data-label', 'TikTok');
-                bubbles.right.innerHTML = 'T' + rDOM;
+                setBubble(bubbles.top, 'Back', `↑${rDOM}`);
+                setBubble(bubbles.bottom, 'Instagram', `I${rDOM}`);
+                setBubble(bubbles.left, 'YouTube', `Y${rDOM}`);
+                setBubble(bubbles.right, 'TikTok', `T${rDOM}`);
             } else if (menuState === 'SEARCHES') {
-                bubbles.bottom.setAttribute('data-label', 'Back');
-                bubbles.bottom.innerHTML = '↓' + rDOM;
-                bubbles.top.setAttribute('data-label', 'Google');
-                bubbles.top.innerHTML = 'G' + rDOM;
-                bubbles.left.setAttribute('data-label', 'Finder');
-                bubbles.left.innerHTML = 'F' + rDOM;
-                // User requested ONLY TWO options (Google & Finder) meaning right bubble is empty/hidden
+                setBubble(bubbles.bottom, 'Back', `↓${rDOM}`);
+                setBubble(bubbles.top, 'Google', `G${rDOM}`);
+                setBubble(bubbles.left, 'Finder', `F${rDOM}`);
                 bubbles.right.style.display = 'none';
             }
+        }
+
+        function setBubble(el, label, html) {
+            el.setAttribute('data-label', label);
+            el.innerHTML = html;
         }
 
         function showMenu(pos) {
@@ -1103,78 +1113,61 @@
             }
         }
 
+        /**
+         * @description Loads specific content into a window frame.
+         * @param {string} frameId ID of the target window
+         * @param {string} type Content type (youtube, instagram, tiktok, finder, google)
+         */
         function loadContent(frameId, type) {
             const frame = document.getElementById(frameId);
             if (!frame) return;
             
-            if (type === 'youtube') {
-                const videoId = 'dQw4w9WgXcQ'; 
-                frame.innerHTML = `<iframe 
-                    src="https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1" 
-                    frameborder="0" 
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
-                    allowfullscreen></iframe>`;
-            } else if (type === 'instagram') {
-                frame.innerHTML = `<iframe src="https://www.instagram.com/p/C_1i1pSg91a/embed" style="width:100%; height:100%; border:none;"></iframe>`;
-            } else if (type === 'tiktok') {
-                frame.innerHTML = `<iframe src="https://www.tiktok.com/embed/v2/7108960844390075691" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>`;
-            } else if (type === 'finder') {
-                frame.innerHTML = `
-                    <div style="background:rgba(30, 30, 30, 0.9); height:100%; border-radius:12px; display:flex; flex-direction:column; color:#fff; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased;">
-                        <!-- Mac OS Window Titlebar -->
-                        <div style="display:flex; align-items:center; padding:12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);">
-                            <div style="display:flex; gap:8px;">
-                                <div style="width:12px; height:12px; border-radius:50%; background:#ff5f56; border:1px solid #e0443e;"></div>
-                                <div style="width:12px; height:12px; border-radius:50%; background:#ffbd2e; border:1px solid #dea123;"></div>
-                                <div style="width:12px; height:12px; border-radius:50%; background:#27c93f; border:1px solid #1aab29;"></div>
-                            </div>
-                            <div style="flex-grow:1; text-align:center; font-size:13px; font-weight:600; color:#ddd; margin-left:-48px;">Desktop</div>
+            const contentMap = {
+                youtube: '<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0&modestbranding=1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>',
+                instagram: '<iframe src="https://www.instagram.com/p/C_1i1pSg91a/embed" style="width:100%; height:100%; border:none;"></iframe>',
+                tiktok: '<iframe src="https://www.tiktok.com/embed/v2/7108960844390075691" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>',
+                google: '<iframe src="https://www.google.com/search?q=google&igu=1" style="width:100%; height:100%; border:none;"></iframe>',
+                finder: getFinderTemplate()
+            };
+
+            frame.innerHTML = contentMap[type] || contentMap.google;
+            frame.style.pointerEvents = 'auto';
+        }
+
+        /**
+         * @description Returns the HTML template for the Mac-style Finder.
+         * @returns {string} HTML string
+         */
+        function getFinderTemplate() {
+            return `
+                <div style="background:var(--mac-bg); height:100%; border-radius:12px; display:flex; flex-direction:column; color:#fff; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                    <div style="display:flex; align-items:center; padding:12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);">
+                        <div style="display:flex; gap:8px;">
+                            <div style="width:12px; height:12px; border-radius:50%; background:#ff5f56;"></div>
+                            <div style="width:12px; height:12px; border-radius:50%; background:#ffbd2e;"></div>
+                            <div style="width:12px; height:12px; border-radius:50%; background:#27c93f;"></div>
                         </div>
-                        
-                        <!-- Finder Body -->
-                        <div style="display:flex; flex-grow:1; overflow:hidden;">
-                            <!-- Sidebar -->
-                            <div style="width:140px; border-right:1px solid rgba(255,255,255,0.1); background:rgba(20,20,20,0.5); padding:10px 0;">
-                                <div style="padding:0 12px; margin-bottom:5px; font-size:11px; color:#888; font-weight:600;">Favorites</div>
-                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">AirDrop</div>
-                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Recents</div>
-                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Applications</div>
-                                <div style="padding:5px 12px; font-size:13px; background:rgba(255,255,255,0.1); border-radius:4px; margin:0 4px;">Desktop</div>
-                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Documents</div>
-                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Downloads</div>
+                        <div style="flex-grow:1; text-align:center; font-size:13px; font-weight:600; color:#ddd; margin-left:-48px;">Desktop</div>
+                    </div>
+                    <div style="display:flex; flex-grow:1; overflow:hidden;">
+                        <div style="width:140px; border-right:1px solid rgba(255,255,255,0.1); background:rgba(20,20,20,0.5); padding:10px 0;">
+                            <div style="padding:0 12px; margin-bottom:5px; font-size:11px; color:#888; font-weight:600;">Favorites</div>
+                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;">AirDrop</div>
+                            <div style="padding:5px 12px; font-size:13px; background:rgba(255,255,255,0.1); border-radius:4px; margin:0 4px;">Desktop</div>
+                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Documents</div>
+                        </div>
+                        <div style="flex-grow:1; padding:20px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:25px; overflow-y:auto;">
+                            <div style="text-align:center; width:70px; cursor:pointer;">
+                                <div style="font-size:40px; margin-bottom:5px;">📁</div>
+                                <div style="font-size:12px;">VIBECODING</div>
                             </div>
-                            
-                            <!-- Content Area -->
-                            <div style="flex-grow:1; padding:20px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:25px; overflow-y:auto;">
-                                <div style="text-align:center; width:70px; cursor:pointer;">
-                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">📁</div>
-                                    <div style="font-size:12px; word-break:break-word;">VIBECODING</div>
-                                </div>
-                                <div style="text-align:center; width:70px; cursor:pointer;">
-                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">📄</div>
-                                    <div style="font-size:12px; word-break:break-word;">notes.md</div>
-                                </div>
-                                <div style="text-align:center; width:70px; cursor:pointer;">
-                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🖼️</div>
-                                    <div style="font-size:12px; word-break:break-word;">reference.png</div>
-                                </div>
-                                <div style="text-align:center; width:70px; cursor:pointer;">
-                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🗂️</div>
-                                    <div style="font-size:12px; word-break:break-word;">Assets</div>
-                                </div>
-                                <div style="text-align:center; width:70px; cursor:pointer;">
-                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🎬</div>
-                                    <div style="font-size:12px; word-break:break-word;">demo_v2.mp4</div>
-                                </div>
+                            <div style="text-align:center; width:70px; cursor:pointer;">
+                                <div style="font-size:40px; margin-bottom:5px;">📄</div>
+                                <div style="font-size:12px;">notes.md</div>
                             </div>
                         </div>
                     </div>
-                `;
-            } else {
-                const url = 'https://www.google.com/search?q=google&igu=1'; 
-                frame.innerHTML = `<iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>`;
-            }
-            frame.style.pointerEvents = 'auto';
+                </div>`;
         }
 
         function simulateClick(x, y) {
