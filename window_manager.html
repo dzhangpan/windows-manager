@@ -462,11 +462,14 @@
         const HOLD_CLOSE = 5 * TICK_RATE;
 
         /** @description Edge detection for instant tap (fires on release) */
-        let wasIndexPinching = false;
+        let wasPinchingR = false;
+        let wasPinchingL = false;
         /** @description Edge detection for menu (fires on press) */
         let wasMiddlePinching = false;
         let lastClickTime = 0;
+        let lastCreationTime = 0;
         const CLICK_COOLDOWN = 300;
+        const CREATION_COOLDOWN = 500;
 
         const PINCH_DIST = 0.055; // Slightly increased for better reach and perspective handling
         const SNAP_DIST = 80;
@@ -573,7 +576,7 @@
                     // Simplify: Just use the counters for stability
                     // Apply release hysteresis for "stickiness"
                     const pinchStable = (gestureState[side].pinch >= GESTURE_THRESHOLD) || 
-                                        (gestureState[side].pinch > 0 && wasIndexPinching); 
+                                        (gestureState[side].pinch > 0 && (side === 'right' ? wasPinchingR : wasPinchingL)); 
                     const mPinchStable = gestureState[side].middlePinch >= GESTURE_THRESHOLD;
                     const openStable = gestureState[side].open >= GESTURE_THRESHOLD;
                     const fistStable = gestureState[side].fist >= GESTURE_THRESHOLD;
@@ -729,18 +732,25 @@
             
             handleExtraction(hR, true);
             
+            // Critical: Update edge detection state even when interaction is guarded
+            const currentPinch = hR.pinching;
+            const pinchStarted = currentPinch && !wasPinchingR;
+            const pinchReleased = !currentPinch && wasPinchingR;
+
             if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') {
+                wasPinchingR = currentPinch;
                 return;
             }
 
-            handleRightHandPinch(hR);
+            handleRightHandPinch(hR, pinchStarted, pinchReleased);
             handleRightHandMenu(hR);
+            wasPinchingR = currentPinch;
         }
 
-        function handleRightHandPinch(hR) {
+        function handleRightHandPinch(hR, started, released) {
             if (hR.pinching) {
                 virtualCursor.classList.add('clicking');
-                if (!wasIndexPinching) {
+                if (started) {
                     const el = document.elementFromPoint(hR.pointPos.x, hR.pointPos.y);
                     if (el?.classList.contains('dock-icon')) {
                         restoreWindow(el.id.replace('dock-icon-', ''));
@@ -749,7 +759,7 @@
                 }
             }
 
-            if (!hR.pinching && wasIndexPinching) {
+            if (released) {
                 const canClick = Date.now() - lastClickTime > CLICK_COOLDOWN && 
                                  creationState === 'IDLE' && 
                                  menuState === 'CLOSED';
@@ -759,7 +769,6 @@
                 }
                 virtualCursor.classList.remove('clicking');
             }
-            wasIndexPinching = hR.pinching;
         }
 
         function handleRightHandMenu(hR) {
@@ -905,8 +914,13 @@
             virtualCursorLeft.style.top = `${hL.pointPos.y - 10}px`;
             virtualCursorLeft.classList.toggle('clicking', hL.pinching || hL.middlePinching);
             handleExtraction(hL, false);
+            const currentPinchL = hL.pinching;
+            const pinchStartedL = currentPinchL && !wasPinchingL;
             
-            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') return;
+            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') {
+                wasPinchingL = currentPinchL;
+                return;
+            }
 
             const hitFrame = (movingFrameId || resizingFrameId) 
                 ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
@@ -950,6 +964,7 @@
                 movingFrameId = null;
                 resizingFrameId = null;
             }
+            wasPinchingL = currentPinchL;
         }
 
         /**
@@ -997,6 +1012,7 @@
             windowsContainer.appendChild(div);
             frames.push({ ...rect, id });
             loadContent(id, 'finder');
+            lastCreationTime = Date.now();
         }
 
         /**
@@ -1208,7 +1224,11 @@
          * @param {boolean} isRight Whether it is the right hand
          */
         function handleExtraction(h, isRight) {
-            if (extractionState === 'IDLE' && h.pinching && !wasIndexPinching) {
+            const wasPinch = isRight ? wasPinchingR : wasPinchingL;
+            const isFreshPinch = h.pinching && !wasPinch;
+            const isCooldownActive = Date.now() - lastCreationTime < CREATION_COOLDOWN;
+
+            if (extractionState === 'IDLE' && isFreshPinch && !isCooldownActive && creationState === 'IDLE') {
                 const el = document.elementFromPoint(h.pointPos.x, h.pointPos.y);
                 if (el?.closest('.spatial-data-file')) {
                     extractionState = 'DRAGGING';
