@@ -321,8 +321,13 @@
         let lastClickTime = 0;
         const CLICK_COOLDOWN = 300;
 
-        const PINCH_DIST = 0.05;
+        const PINCH_DIST = 0.045; // Slightly tightened for better precision
         const SNAP_DIST = 80;
+
+        // Smoothing state
+        const SMOOTHING = 0.4; // Low-pass filter weight (0 to 1, lower = smoother)
+        let smoothPos = { left: null, right: null };
+        let smoothPoint = { left: null, right: null };
 
         // --- HAND TRACKING ---
         const hands = new Hands({
@@ -332,8 +337,8 @@
         hands.setOptions({
             maxNumHands: 2,
             modelComplexity: 1,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.7
+            minDetectionConfidence: 0.8,
+            minTrackingConfidence: 0.8
         });
 
         function getDist(a, b) {
@@ -371,11 +376,13 @@
             let handData = { left: null, right: null };
 
             if (results.multiHandLandmarks && results.multiHandedness) {
+                const foundSides = new Set();
                 results.multiHandLandmarks.forEach((lm, i) => {
                     const label = results.multiHandedness[i].label; 
                     const isRight = label === 'Left'; 
                     const side = isRight ? 'right' : 'left';
-
+                    foundSides.add(side);
+                    
                     const thumb = lm[4];
                     const index = lm[8];
                     const middle = lm[12];
@@ -395,9 +402,22 @@
                     const palmPos = toScreen(palm.x, palm.y);
                     const pointPos = toScreen(index.x, index.y);
 
+                    const targetPos = (isOpen || ist) ? palmPos : pinchPos;
+
+                    // Apply Smoothing (Low Pass Filter)
+                    if (!smoothPos[side]) {
+                        smoothPos[side] = { ...targetPos };
+                        smoothPoint[side] = { ...pointPos };
+                    } else {
+                        smoothPos[side].x += (targetPos.x - smoothPos[side].x) * SMOOTHING;
+                        smoothPos[side].y += (targetPos.y - smoothPos[side].y) * SMOOTHING;
+                        smoothPoint[side].x += (pointPos.x - smoothPoint[side].x) * SMOOTHING;
+                        smoothPoint[side].y += (pointPos.y - smoothPoint[side].y) * SMOOTHING;
+                    }
+
                     handData[side] = { 
-                        pos: (isOpen || ist) ? palmPos : pinchPos, 
-                        pointPos: pointPos, 
+                        pos: { ...smoothPos[side] }, 
+                        pointPos: { ...smoothPoint[side] }, 
                         pinching: isPinching,
                         middlePinching: isMiddlePinching,
                         pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
@@ -414,7 +434,17 @@
 
                     drawHandMarker(handData[side].pos, isPinching || isMiddlePinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
                 });
+
+                // Reset smoothing for hands not found in this frame
+                if (!foundSides.has('left')) { smoothPos.left = null; smoothPoint.left = null; }
+                if (!foundSides.has('right')) { smoothPos.right = null; smoothPoint.right = null; }
+            } else {
+                smoothPos.left = null; smoothPoint.left = null;
+                smoothPos.right = null; smoothPoint.right = null;
             }
+
+
+
 
             processGestures(handData);
             drawUI();
