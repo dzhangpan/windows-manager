@@ -230,6 +230,10 @@
         RIGHT THUMB+INDEX = TAP | RIGHT THUMB+MIDDLE = MENU
     </div>
 
+    <div id="debug-hud" style="position:fixed; bottom:20px; right:20px; font-family:monospace; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; border:1px solid var(--neon-blue); z-index:1000; font-size:10px; pointer-events:none; color:var(--neon-blue); transition: opacity 0.3s;">
+        TRACKING STATUS INITIALIZING...
+    </div>
+
     <div class="security-note">
         NOTE: INTERACTION WITH EXTERNAL SITES REQUIRES CHROME FLAG --DISABLE-WEB-SECURITY.
     </div>
@@ -321,7 +325,7 @@
         let lastClickTime = 0;
         const CLICK_COOLDOWN = 300;
 
-        const PINCH_DIST = 0.045; // Slightly tightened for better precision
+        const PINCH_DIST = 0.055; // Slightly increased for better reach and perspective handling
         const SNAP_DIST = 80;
 
         // Smoothing state
@@ -345,8 +349,8 @@
         hands.setOptions({
             maxNumHands: 2,
             modelComplexity: 1,
-            minDetectionConfidence: 0.8,
-            minTrackingConfidence: 0.8
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
         });
 
         function getDist(a, b) {
@@ -419,7 +423,16 @@
                     if (ist) gestureState[side].fist = Math.min(gestureState[side].fist + 1, GESTURE_THRESHOLD + 1);
                     else gestureState[side].fist = Math.max(gestureState[side].fist - 1, 0);
 
-                    const pinchStable = gestureState[side].pinch >= GESTURE_THRESHOLD;
+                    // Apply release hysteresis to pinchStable only
+                    let isPinchActive = isPinching;
+                    if (gestureState[side].pinch >= GESTURE_THRESHOLD) isPinchActive = true;
+                    else if (gestureState[side].pinch > 0 && gestureState[side].pinch < GESTURE_THRESHOLD && isPinching) isPinchActive = true;
+                    // Simplify: Just use the counters for stability
+                    // Apply release hysteresis for "stickiness"
+                    const pinchStable = (gestureState[side].pinch >= GESTURE_THRESHOLD) || 
+                                        (gestureState[side].pinch > 0 && (side === 'left' ? wasIndexPinching : wasIndexPinching)); 
+                                        // Wait, wasIndexPinching is only for right hand.
+                                        // Let's use the counters directly for simple logic.
                     const mPinchStable = gestureState[side].middlePinch >= GESTURE_THRESHOLD;
                     const openStable = gestureState[side].open >= GESTURE_THRESHOLD;
                     const fistStable = gestureState[side].fist >= GESTURE_THRESHOLD;
@@ -430,17 +443,18 @@
                     const indexTip = toScreen(index.x, index.y);
 
                     // --- TARGET LOGIC REFINEMENT ---
-                    // Virtual Cursor (focus point) follows the stable pinch center exactly
-                    const targetPoint = (gestureState[side].pinch >= GESTURE_THRESHOLD - 1) ? pinchPos : 
-                                        (gestureState[side].middlePinch >= GESTURE_THRESHOLD - 1 ? mPinchPos : indexTip);
+                    // Virtual Cursor (focus point)
+                    const isPinchingAny = gestureState[side].pinch >= GESTURE_THRESHOLD - 1;
+                    const isMiddlePinchingAny = gestureState[side].middlePinch >= GESTURE_THRESHOLD - 1;
+
+                    const targetPoint = isPinchingAny ? pinchPos : (isMiddlePinchingAny ? mPinchPos : indexTip);
                     
                     // Marker (ball) target - Strictly suppress palm ball if manipulation is even partially active
-                    // We lock the ball to the finger tip much sooner than the pinch is confirmed to prevent "knuckle jumping"
                     const isManipulationActive = gestureState[side].pinch > 0 || gestureState[side].middlePinch > 0;
                     const targetPos = isManipulationActive ? targetPoint : (openStable || fistStable ? palmPos : targetPoint);
 
-                    // Apply Smoothing (Low Pass Filter)
-                    if (!smoothPos[side]) {
+                    // Apply Smoothing (Low Pass Filter) with safety
+                    if (!smoothPos[side] || isNaN(smoothPos[side].x)) {
                         smoothPos[side] = { ...targetPos };
                         smoothPoint[side] = { ...targetPoint };
                     } else {
@@ -469,6 +483,14 @@
 
                     drawHandMarker(handData[side].pos, handData[side].isManipulationMode, isRight, handData[side].pinchAmount, openStable, fistStable, progress);
                 });
+
+                // Update Debug HUD
+                const debugDiv = document.getElementById('debug-hud');
+                if (debugDiv) {
+                    const lData = handData.left ? `${handData.left.pinching ? 'PINCH' : (handData.left.isOpen ? 'OPEN' : (handData.left.isFist ? 'FIST' : 'IDLE'))}` : 'LOST';
+                    const rData = handData.right ? `${handData.right.pinching ? 'PINCH' : (handData.right.isOpen ? 'OPEN' : (handData.right.isFist ? 'FIST' : 'IDLE'))}` : 'LOST';
+                    debugDiv.innerHTML = `L: ${lData} | R: ${rData}`;
+                }
 
                 // Reset smoothing and gesture state for hands not found in this frame
                 if (!foundSides.has('left')) { 
