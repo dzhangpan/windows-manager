@@ -91,27 +91,6 @@
             background: #000;
         }
 
-        /* Apple-style corner resize handle - floats outside the frame */
-        .resize-handle {
-            position: absolute;
-            bottom: -12px;
-            right: -12px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.35);
-            border: 2px solid rgba(255, 255, 255, 0.5);
-            z-index: 10;
-            transition: all 0.2s ease;
-        }
-
-        .window-frame.resizing .resize-handle {
-            background: rgba(0, 242, 255, 0.6);
-            border-color: var(--neon-blue);
-            box-shadow: 0 0 15px var(--neon-blue);
-            transform: scale(1.3);
-        }
-
         /* Floating Menu Bubbles */
         .bubble-menu {
             position: fixed;
@@ -247,7 +226,7 @@
 
     <div id="gesture-hud" class="hud-hint">
         PINCH BOTH HANDS TO CREATE FRAME<br>
-        LEFT FIST (5s) TO CLOSE | LEFT PINCH TO MOVE / RESIZE<br>
+        LEFT FIST (5s) TO CLOSE | LEFT T+I: MOVE | LEFT T+M: RESIZE<br>
         RIGHT THUMB+INDEX = TAP | RIGHT THUMB+MIDDLE = MENU
     </div>
 
@@ -478,18 +457,6 @@
                 virtualCursor.style.left = (hR.pointPos.x - 10) + 'px';
                 virtualCursor.style.top = (hR.pointPos.y - 10) + 'px';
                 
-                // Gaze detection for windows
-                frames.forEach(f => {
-                    const el = document.getElementById(f.id);
-                    if (!el) return;
-                    
-                    const handleX = f.x + f.w;
-                    const handleY = f.y + f.h;
-                    const distToCursor = Math.sqrt(Math.pow(hR.pointPos.x - handleX, 2) + Math.pow(hR.pointPos.y - handleY, 2));
-                    
-                    el.classList.toggle('gazing-resize', distToCursor < 60);
-                });
-                
                 // === THUMB+INDEX: Instant Tap/Click (fires on release edge) ===
                 if (hR.pinching) {
                     virtualCursor.classList.add('clicking');
@@ -550,6 +517,7 @@
                 const hitFrame = (movingFrameId || resizingFrameId) 
                     ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
                     : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
+                
                 if (hitFrame) {
                     if (hL.isFist) {
                         holdTimerL++;
@@ -558,23 +526,11 @@
                             holdTimerL = 0;
                         }
                     } else if (hL.pinching) {
+                        // THUMB + INDEX = MOVE
                         if (!movingFrameId && !resizingFrameId) {
-                            // Check if pinch is near the resize handle (bottom-right corner)
-                            const handleX = hitFrame.x + hitFrame.w;
-                            const handleY = hitFrame.y + hitFrame.h;
-                            const distToHandle = Math.sqrt(Math.pow(hL.pos.x - handleX, 2) + Math.pow(hL.pos.y - handleY, 2));
-                            
-                            if (distToHandle < 50) {
-                                resizingFrameId = hitFrame.id;
-                                moveOffset = { x: hL.pos.x, y: hL.pos.y };
-                                const el = document.getElementById(hitFrame.id);
-                                if (el) el.classList.add('resizing');
-                            } else {
-                                movingFrameId = hitFrame.id;
-                                moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
-                            }
+                            movingFrameId = hitFrame.id;
+                            moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
                         } else if (movingFrameId) {
-                            // Moving
                             hitFrame.x = hL.pos.x + moveOffset.x;
                             hitFrame.y = hL.pos.y + moveOffset.y;
                             const el = document.getElementById(hitFrame.id);
@@ -582,8 +538,15 @@
                                 el.style.left = hitFrame.x + 'px';
                                 el.style.top = hitFrame.y + 'px';
                             }
+                        }
+                    } else if (hL.middlePinching) {
+                        // THUMB + MIDDLE = RESIZE
+                        if (!resizingFrameId && !movingFrameId) {
+                            resizingFrameId = hitFrame.id;
+                            moveOffset = { x: hL.pos.x, y: hL.pos.y };
+                            const el = document.getElementById(hitFrame.id);
+                            if (el) el.classList.add('resizing');
                         } else if (resizingFrameId) {
-                            // Resizing
                             const dx = hL.pos.x - moveOffset.x;
                             const dy = hL.pos.y - moveOffset.y;
                             const newW = Math.max(200, hitFrame.w + dx);
@@ -654,11 +617,6 @@
             div.style.top = rect.y + 'px';
             div.style.width = rect.w + 'px';
             div.style.height = rect.h + 'px';
-
-            // Corner resize handle
-            const handle = document.createElement('div');
-            handle.className = 'resize-handle';
-            div.appendChild(handle);
             
             windowsContainer.appendChild(div);
             frames.push({ ...rect, id: id });
