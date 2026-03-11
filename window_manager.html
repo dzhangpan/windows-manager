@@ -132,10 +132,10 @@
             transition: all 0.3s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
         }
 
-        #bubble-google { transform: translateY(-80px); }
-        #bubble-youtube { transform: translateY(80px); }
-        #bubble-minimize { transform: translateX(-80px); }
-        #bubble-close { transform: translateX(80px); border-color: #ff3b30; color: #ff3b30; }
+        #bubble-top { transform: translateY(-80px); }
+        #bubble-bottom { transform: translateY(80px); }
+        #bubble-left { transform: translateX(-80px); }
+        #bubble-right { transform: translateX(80px); }
 
         .bubble.active {
             background: rgba(0, 242, 255, 0.8);
@@ -143,7 +143,7 @@
             box-shadow: 0 0 20px rgba(0, 242, 255, 0.8);
         }
 
-        #bubble-close.active {
+        #bubble-right.active {
             background: rgba(255, 59, 48, 0.8);
             color: #fff;
             box-shadow: 0 0 20px rgba(255, 59, 48, 0.8);
@@ -229,10 +229,10 @@
             white-space: nowrap;
         }
 
-        #bubble-google::after { top: -25px; left: 50%; transform: translateX(-50%); }
-        #bubble-youtube::after { bottom: -25px; left: 50%; transform: translateX(-50%); }
-        #bubble-minimize::after { right: 75px; top: 50%; transform: translateY(-50%); }
-        #bubble-close::after { left: 75px; top: 50%; transform: translateY(-50%); }
+        #bubble-top::after { top: -25px; left: 50%; transform: translateX(-50%); }
+        #bubble-bottom::after { bottom: -25px; left: 50%; transform: translateX(-50%); }
+        #bubble-left::after { right: 75px; top: 50%; transform: translateY(-50%); }
+        #bubble-right::after { left: 75px; top: 50%; transform: translateY(-50%); }
 
         /* Virtual Cursors */
         #virtual-cursor, #virtual-cursor-left {
@@ -335,10 +335,10 @@
     </div>
 
     <div id="menu-container" class="bubble-menu">
-        <div class="bubble" data-label="Google" id="bubble-google">G</div>
-        <div class="bubble" data-label="YouTube" id="bubble-youtube">Y</div>
-        <div class="bubble" data-label="Minimize" id="bubble-minimize">-</div>
-        <div class="bubble" data-label="Close" id="bubble-close">
+        <div class="bubble" data-label="Searches" id="bubble-top">S</div>
+        <div class="bubble" data-label="Apps" id="bubble-bottom">A</div>
+        <div class="bubble" data-label="Minimize" id="bubble-left">-</div>
+        <div class="bubble" data-label="Close" id="bubble-right">
             X
             <div class="progress-ring"></div>
         </div>
@@ -380,10 +380,10 @@
         const virtualCursor = document.getElementById('virtual-cursor');
         const virtualCursorLeft = document.getElementById('virtual-cursor-left');
         const bubbles = {
-            google: document.getElementById('bubble-google'),
-            youtube: document.getElementById('bubble-youtube'),
-            minimize: document.getElementById('bubble-minimize'),
-            close: document.getElementById('bubble-close')
+            top: document.getElementById('bubble-top'),
+            bottom: document.getElementById('bubble-bottom'),
+            left: document.getElementById('bubble-left'),
+            right: document.getElementById('bubble-right')
         };
         const minimizeDock = document.getElementById('minimize-dock');
 
@@ -428,7 +428,7 @@
         let currentPreviewFrame = null;
         let creationSpark = 0;
 
-        let menuState = 'CLOSED'; 
+        let menuState = 'CLOSED'; // CLOSED, ROOT, APPS, SEARCHES
         let activeMenuFrameId = null;
         let menuSelection = null; 
         let menuStartPos = null;
@@ -712,18 +712,21 @@
 
                 // === THUMB+MIDDLE: Menu (fires on press edge, navigates while held) ===
                 if (hR.middlePinching && !wasMiddlePinching && menuState === 'CLOSED') {
-                    // Middle pinch just started — open menu if over a frame
+                    // Middle pinch just started — open ROOT menu if over a frame
                     if (creationState === 'IDLE') {
                         const hitFrame = frames.find(f => !f.isMinimized && hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
                         if (hitFrame) {
-                            menuState = 'OPEN';
+                            menuState = 'ROOT';
                             activeMenuFrameId = hitFrame.id;
                             menuStartPos = { ...hR.pos };
+                            updateMenuLabels();
                             showMenu(hR.pos);
+                            bubbles.right.style.borderColor = '#ff3b30';
+                            bubbles.right.style.color = '#ff3b30';
                         }
                     }
                 }
-                if (hR.middlePinching && menuState === 'OPEN') {
+                if (hR.middlePinching && menuState !== 'CLOSED') {
                     // While holding middle pinch — navigate selection
                     const dx = hR.pos.x - menuStartPos.x;
                     const dy = hR.pos.y - menuStartPos.y;
@@ -731,12 +734,17 @@
                     let newSelection = null;
                     if (Math.abs(dy) > Math.abs(dx)) {
                         // Vertical movement
-                        if (dy < -60) newSelection = 'google';
-                        else if (dy > 60) newSelection = 'youtube';
+                        if (dy < -60) newSelection = 'top';
+                        else if (dy > 60) newSelection = 'bottom';
                     } else {
                         // Horizontal movement
-                        if (dx < -60) newSelection = 'minimize';
-                        else if (dx > 60) newSelection = 'close';
+                        if (dx < -60) newSelection = 'left';
+                        else if (dx > 60) newSelection = 'right';
+                    }
+
+                    // Special case for SEARCHES menu right bubble (empty)
+                    if (menuState === 'SEARCHES' && newSelection === 'right') {
+                        newSelection = null;
                     }
 
                     if (newSelection !== menuSelection) {
@@ -745,20 +753,20 @@
                         
                         // Reset delete hold if we changed selection
                         isHoldingDelete = false;
-                        bubbles.close.classList.remove('progressing');
-                        bubbles.close.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
+                        bubbles.right.classList.remove('progressing');
+                        bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
                     }
                     
-                    // Handle 1-second hold for Delete
-                    if (menuSelection === 'close') {
+                    // Handle 1-second hold for Delete (only in ROOT menu on Right selection)
+                    if (menuState === 'ROOT' && menuSelection === 'right') {
                         if (!isHoldingDelete) {
                             isHoldingDelete = true;
                             deleteHoldStart = Date.now();
-                            bubbles.close.classList.add('progressing');
+                            bubbles.right.classList.add('progressing');
                         } else {
                             const holdTime = Date.now() - deleteHoldStart;
                             const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
-                            bubbles.close.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
+                            bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
                             
                             if (progress >= 1) {
                                 deleteWindow(activeMenuFrameId);
@@ -770,19 +778,56 @@
                         }
                     }
                 }
-                if (!hR.middlePinching && wasMiddlePinching && menuState === 'OPEN') {
-                    // Middle pinch released — confirm selection
-                    if (menuSelection === 'google' || menuSelection === 'youtube') {
-                        loadContent(activeMenuFrameId, menuSelection);
-                    } else if (menuSelection === 'minimize') {
-                        minimizeWindow(activeMenuFrameId);
+                if (!hR.middlePinching && wasMiddlePinching && menuState !== 'CLOSED') {
+                    // Middle pinch released — confirm selection or transition state
+                    let transitionState = false;
+
+                    if (menuState === 'ROOT') {
+                        if (menuSelection === 'top') { menuState = 'SEARCHES'; transitionState = true; }
+                        else if (menuSelection === 'bottom') { menuState = 'APPS'; transitionState = true; }
+                        else if (menuSelection === 'left') { minimizeWindow(activeMenuFrameId); }
+                    } else if (menuState === 'APPS') {
+                        if (menuSelection === 'top') { menuState = 'ROOT'; transitionState = true; }
+                        else if (menuSelection === 'bottom') { loadContent(activeMenuFrameId, 'instagram'); }
+                        else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'youtube'); }
+                        else if (menuSelection === 'right') { loadContent(activeMenuFrameId, 'tiktok'); }
+                    } else if (menuState === 'SEARCHES') {
+                        if (menuSelection === 'bottom') { menuState = 'ROOT'; transitionState = true; }
+                        else if (menuSelection === 'top') { loadContent(activeMenuFrameId, 'google'); }
+                        else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'finder'); }
                     }
-                    // If it was 'close', it requires the 1s hold, so releasing early does nothing but close the menu.
-                    
-                    hideMenu();
-                    menuState = 'CLOSED';
-                    menuSelection = null;
-                    isHoldingDelete = false;
+
+                    if (transitionState) {
+                        // Re-anchor the menu to the current hand position to allow continuous gesture
+                        menuStartPos = { ...hR.pos };
+                        menuSelection = null;
+                        updateMenuLabels();
+                        updateMenuVisuals();
+                        showMenu(hR.pos); // moves the physical div
+                        // Keep wasMiddlePinching TRUE so next frame continues tracking inside the new state
+                        wasMiddlePinching = true;
+                        // But physically, the user let go? Wait, if they let go, the menu should CLOSE unless they are holding it?
+                        // If they RELEASE to select a submenu, they have to PINCH AGAIN? 
+                        // Ah! Usually holding is better, but since they released to select:
+                        // No, the user wants "sub section of bubles and to go back there will be a buble".
+                        // Wait, if they release, let's keep the menu open but require them to move to the new bubble?
+                        // No. Gestures usually: Pinch Middle -> Drag -> Release. 
+                        // If they Release on 'top' (Searches), it enters Searches state, but wait, their hand is no longer pinching.
+                        // So next frame, middlePinching = false.
+                        // If they want to select from Searches, they have to Pinch Middle again? Yes, that's more stable!
+                        // Let's close the menu on final action.
+                        // Actually, if we transitionstate = true, it means we don't close. We just wait for them to pinch and drag again? No, if we keep `menuState != 'CLOSED'`, the menu stays on screen waiting for the next pinch!
+                        // That is perfect! They drag up, release. Menu stays open. They move hand to new bubble, pinch-drag to select.
+                        // BUT `menuStartPos` is only set on pinch.
+
+                    }
+
+                    if (!transitionState) {
+                        hideMenu();
+                        menuState = 'CLOSED';
+                        menuSelection = null;
+                        isHoldingDelete = false;
+                    }
                 }
                 wasMiddlePinching = hR.middlePinching;
 
@@ -790,7 +835,7 @@
                 virtualCursor.style.display = 'none';
                 wasIndexPinching = false;
                 wasMiddlePinching = false;
-                if (menuState === 'OPEN') {
+                if (menuState !== 'CLOSED') {
                     hideMenu();
                     menuState = 'CLOSED';
                     menuSelection = null;
@@ -906,6 +951,46 @@
             frames.push({ ...rect, id: id });
         }
 
+        function updateMenuLabels() {
+            // Adjust styles and text based on state machine
+            bubbles.right.style.borderColor = 'var(--glass-border)';
+            bubbles.right.style.color = '#fff';
+            bubbles.right.innerHTML = '';
+            bubbles.right.style.display = 'flex';
+            bubbles.bottom.style.display = 'flex';
+
+            if (menuState === 'ROOT') {
+                bubbles.top.setAttribute('data-label', 'Searches');
+                bubbles.top.innerHTML = 'S';
+                bubbles.bottom.setAttribute('data-label', 'Apps');
+                bubbles.bottom.innerHTML = 'A';
+                bubbles.left.setAttribute('data-label', 'Minimize');
+                bubbles.left.innerHTML = '-';
+                bubbles.right.setAttribute('data-label', 'Close');
+                bubbles.right.innerHTML = 'X<div class="progress-ring"></div>';
+                bubbles.right.style.borderColor = '#ff3b30';
+                bubbles.right.style.color = '#ff3b30';
+            } else if (menuState === 'APPS') {
+                bubbles.top.setAttribute('data-label', 'Back');
+                bubbles.top.innerHTML = '↑';
+                bubbles.bottom.setAttribute('data-label', 'Instagram');
+                bubbles.bottom.innerHTML = 'I';
+                bubbles.left.setAttribute('data-label', 'YouTube');
+                bubbles.left.innerHTML = 'Y';
+                bubbles.right.setAttribute('data-label', 'TikTok');
+                bubbles.right.innerHTML = 'T';
+            } else if (menuState === 'SEARCHES') {
+                bubbles.bottom.setAttribute('data-label', 'Back');
+                bubbles.bottom.innerHTML = '↓';
+                bubbles.top.setAttribute('data-label', 'Google');
+                bubbles.top.innerHTML = 'G';
+                bubbles.left.setAttribute('data-label', 'Finder');
+                bubbles.left.innerHTML = 'F';
+                // User requested ONLY TWO options (Google & Finder) meaning right bubble is empty/hidden
+                bubbles.right.style.display = 'none';
+            }
+        }
+
         function showMenu(pos) {
             menuContainer.style.left = (pos.x - 30) + 'px';
             menuContainer.style.top = (pos.y - 70) + 'px';
@@ -914,15 +999,17 @@
 
         function hideMenu() {
             menuContainer.classList.remove('visible');
-            bubbles.google.classList.remove('active');
-            bubbles.youtube.classList.remove('active');
+            bubbles.top.classList.remove('active');
+            bubbles.bottom.classList.remove('active');
+            bubbles.left.classList.remove('active');
+            bubbles.right.classList.remove('active');
         }
 
         function updateMenuVisuals() {
-            bubbles.google.classList.toggle('active', menuSelection === 'google');
-            bubbles.youtube.classList.toggle('active', menuSelection === 'youtube');
-            bubbles.minimize.classList.toggle('active', menuSelection === 'minimize');
-            bubbles.close.classList.toggle('active', menuSelection === 'close');
+            bubbles.top.classList.toggle('active', menuSelection === 'top');
+            bubbles.bottom.classList.toggle('active', menuSelection === 'bottom');
+            bubbles.left.classList.toggle('active', menuSelection === 'left');
+            bubbles.right.classList.toggle('active', menuSelection === 'right');
         }
         
         function updateProgressRing(p) {
@@ -944,7 +1031,7 @@
                 const x = 50 + 50 * Math.tan((p - 1) * Math.PI * 4);
                 path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x}% 0)`;
             }
-            bubbles.close.querySelector('.progress-ring').style.clipPath = path;
+            bubbles.right.querySelector('.progress-ring').style.clipPath = path;
         }
 
         function minimizeWindow(id) {
@@ -1024,8 +1111,64 @@
                     frameborder="0" 
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
                     allowfullscreen></iframe>`;
+            } else if (type === 'instagram') {
+                frame.innerHTML = `<iframe src="https://www.instagram.com/p/C_1i1pSg91a/embed" style="width:100%; height:100%; border:none;"></iframe>`;
+            } else if (type === 'tiktok') {
+                frame.innerHTML = `<iframe src="https://www.tiktok.com/embed/v2/7108960844390075691" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>`;
+            } else if (type === 'finder') {
+                frame.innerHTML = `
+                    <div style="background:rgba(30, 30, 30, 0.9); height:100%; border-radius:12px; display:flex; flex-direction:column; color:#fff; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased;">
+                        <!-- Mac OS Window Titlebar -->
+                        <div style="display:flex; align-items:center; padding:12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);">
+                            <div style="display:flex; gap:8px;">
+                                <div style="width:12px; height:12px; border-radius:50%; background:#ff5f56; border:1px solid #e0443e;"></div>
+                                <div style="width:12px; height:12px; border-radius:50%; background:#ffbd2e; border:1px solid #dea123;"></div>
+                                <div style="width:12px; height:12px; border-radius:50%; background:#27c93f; border:1px solid #1aab29;"></div>
+                            </div>
+                            <div style="flex-grow:1; text-align:center; font-size:13px; font-weight:600; color:#ddd; margin-left:-48px;">Desktop</div>
+                        </div>
+                        
+                        <!-- Finder Body -->
+                        <div style="display:flex; flex-grow:1; overflow:hidden;">
+                            <!-- Sidebar -->
+                            <div style="width:140px; border-right:1px solid rgba(255,255,255,0.1); background:rgba(20,20,20,0.5); padding:10px 0;">
+                                <div style="padding:0 12px; margin-bottom:5px; font-size:11px; color:#888; font-weight:600;">Favorites</div>
+                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">AirDrop</div>
+                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Recents</div>
+                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Applications</div>
+                                <div style="padding:5px 12px; font-size:13px; background:rgba(255,255,255,0.1); border-radius:4px; margin:0 4px;">Desktop</div>
+                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Documents</div>
+                                <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Downloads</div>
+                            </div>
+                            
+                            <!-- Content Area -->
+                            <div style="flex-grow:1; padding:20px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:25px; overflow-y:auto;">
+                                <div style="text-align:center; width:70px; cursor:pointer;">
+                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">📁</div>
+                                    <div style="font-size:12px; word-break:break-word;">VIBECODING</div>
+                                </div>
+                                <div style="text-align:center; width:70px; cursor:pointer;">
+                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">📄</div>
+                                    <div style="font-size:12px; word-break:break-word;">notes.md</div>
+                                </div>
+                                <div style="text-align:center; width:70px; cursor:pointer;">
+                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🖼️</div>
+                                    <div style="font-size:12px; word-break:break-word;">reference.png</div>
+                                </div>
+                                <div style="text-align:center; width:70px; cursor:pointer;">
+                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🗂️</div>
+                                    <div style="font-size:12px; word-break:break-word;">Assets</div>
+                                </div>
+                                <div style="text-align:center; width:70px; cursor:pointer;">
+                                    <div style="font-size:40px; margin-bottom:5px; line-height:1;">🎬</div>
+                                    <div style="font-size:12px; word-break:break-word;">demo_v2.mp4</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
             } else {
-                const url = 'https://www.google.com/search?q=google&igu=1'; // Added igu=1 for better embedding
+                const url = 'https://www.google.com/search?q=google&igu=1'; 
                 frame.innerHTML = `<iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>`;
             }
             frame.style.pointerEvents = 'auto';
