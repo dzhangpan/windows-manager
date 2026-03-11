@@ -300,19 +300,21 @@
         let holdTimerL = 0; 
         let holdTimerR = 0;
         let movingFrameId = null;
+        let scrollingFrameId = null;
+        let lastScrollY = 0;
         let moveOffset = { x: 0, y: 0 };
 
         const TICK_RATE = 30;
         const HOLD_MOVE = 2 * TICK_RATE; 
         const HOLD_MENU = 1 * TICK_RATE;
         const HOLD_CLOSE = 5 * TICK_RATE;
-        const CLICK_MAX_TIME = 0.5 * TICK_RATE; 
+        const CLICK_MAX_TIME = 0.8 * TICK_RATE; // Slightly more time for tap recognition
 
         let lastClickTime = 0;
         const CLICK_COOLDOWN = 300;
 
-        const PINCH_DIST = 0.05;
-        const SNAP_DIST = 80;
+        const PINCH_DIST = 0.08; // Increased sensitivity
+        const SNAP_DIST = 100; // More generous creation snap
 
         // --- HAND TRACKING ---
         const hands = new Hands({
@@ -456,8 +458,8 @@
                         }
                     } else if (menuState === 'OPEN') {
                         const dy = hR.pos.y - menuStartPos.y;
-                        if (dy < -40) menuSelection = 'google';
-                        else if (dy > 40) menuSelection = 'youtube';
+                        if (dy < -80) menuSelection = 'google'; // More intentional movement
+                        else if (dy > 80) menuSelection = 'youtube';
                         else menuSelection = null;
                         updateMenuVisuals();
                     }
@@ -467,6 +469,8 @@
                         hideMenu();
                         menuState = 'CLOSED';
                         menuSelection = null;
+                    } else if (scrollingFrameId) {
+                        scrollingFrameId = null;
                     } else if (holdTimerR > 0 && holdTimerR < CLICK_MAX_TIME) {
                         if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE') {
                             simulateClick(hR.pointPos.x, hR.pointPos.y);
@@ -475,6 +479,23 @@
                     }
                     holdTimerR = 0;
                     virtualCursor.classList.remove('clicking');
+                }
+
+                // Scrolling Logic
+                if (hR && hR.pinching && !scrollingFrameId && menuState === 'CLOSED') {
+                    const hitFrame = frames.find(f => hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
+                    if (hitFrame && Math.abs(hR.pos.y - menuStartPos.y) > 20 && holdTimerR < HOLD_MENU) {
+                        scrollingFrameId = hitFrame.id;
+                        lastScrollY = hR.pos.y;
+                    }
+                }
+                if (scrollingFrameId && hR.pinching) {
+                    const el = document.getElementById(scrollingFrameId);
+                    if (el) {
+                        const dy = lastScrollY - hR.pos.y;
+                        el.scrollTop += dy * 2;
+                        lastScrollY = hR.pos.y;
+                    }
                 }
             } else {
                 virtualCursor.style.display = 'none';
@@ -594,8 +615,8 @@
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
                     allowfullscreen></iframe>`;
             } else {
-                const url = 'https://www.google.com/search?q=google&igu=1'; 
-                frame.innerHTML = `<iframe src="${url}"></iframe>`;
+                const url = 'https://www.google.com/search?q=google&igu=1'; // Added igu=1 for better embedding
+                frame.innerHTML = `<iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>`;
             }
             frame.style.pointerEvents = 'auto';
         }
@@ -615,17 +636,19 @@
             marker.style.top = (y - 20) + 'px';
             marker.style.width = '40px';
             marker.style.height = '40px';
-            marker.style.border = '2px solid white';
             marker.style.borderRadius = '50%';
             marker.style.pointerEvents = 'none';
-            marker.style.zIndex = '2000';
-            marker.style.transition = 'all 0.5s ease';
+            marker.style.zIndex = '10001';
+            marker.style.background = 'rgba(0, 242, 255, 0.4)';
+            marker.style.boxShadow = '0 0 20px cyan';
+            marker.style.transition = 'all 0.4s ease-out';
             document.body.appendChild(marker);
+            
             setTimeout(() => {
-                marker.style.transform = 'scale(2)';
+                marker.style.transform = 'scale(2.5)';
                 marker.style.opacity = '0';
-                setTimeout(() => marker.remove(), 500);
-            }, 0);
+                setTimeout(() => marker.remove(), 400);
+            }, 10);
         }
 
         function deleteWindow(id) {
