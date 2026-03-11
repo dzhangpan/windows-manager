@@ -1028,7 +1028,7 @@
             
             windowsContainer.appendChild(div);
             frames.push({ ...rect, id });
-            loadContent(id, 'finder');
+            // NOTE: No content loaded by default — user selects content via menu
             lastCreationTime = Date.now();
         }
 
