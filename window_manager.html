@@ -742,92 +742,87 @@
                         else if (dx > 60) newSelection = 'right';
                     }
 
-                    // Special case for SEARCHES menu right bubble (empty)
-                    if (menuState === 'SEARCHES' && newSelection === 'right') {
-                        newSelection = null;
+                    // Handle Immediate Transition to Submenus while Dragging
+                    let didTransition = false;
+                    if (newSelection) {
+                        if (menuState === 'ROOT') {
+                            if (newSelection === 'top') { menuState = 'SEARCHES'; didTransition = true; }
+                            else if (newSelection === 'bottom') { menuState = 'APPS'; didTransition = true; }
+                        } else if (menuState === 'APPS') {
+                            if (newSelection === 'top') { menuState = 'ROOT'; didTransition = true; }
+                        } else if (menuState === 'SEARCHES') {
+                            if (newSelection === 'bottom') { menuState = 'ROOT'; didTransition = true; }
+                        }
+                        
+                        if (didTransition) {
+                            // Re-anchor the menu to prevent double-triggering and allow continuous swipe
+                            menuStartPos = { ...hR.pos };
+                            menuSelection = null;
+                            newSelection = null;
+                            updateMenuLabels();
+                            updateMenuVisuals();
+                            showMenu(hR.pos); // Snaps the UI to the current hand position
+                        }
                     }
 
-                    if (newSelection !== menuSelection) {
-                        menuSelection = newSelection;
-                        updateMenuVisuals();
-                        
-                        // Reset delete hold if we changed selection
-                        isHoldingDelete = false;
-                        bubbles.right.classList.remove('progressing');
-                        bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
-                    }
-                    
-                    // Handle 1-second hold for Delete (only in ROOT menu on Right selection)
-                    if (menuState === 'ROOT' && menuSelection === 'right') {
-                        if (!isHoldingDelete) {
-                            isHoldingDelete = true;
-                            deleteHoldStart = Date.now();
-                            bubbles.right.classList.add('progressing');
-                        } else {
-                            const holdTime = Date.now() - deleteHoldStart;
-                            const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
-                            bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
+                    if (!didTransition) {
+                        // Special case for SEARCHES menu right bubble (empty)
+                        if (menuState === 'SEARCHES' && newSelection === 'right') {
+                            newSelection = null;
+                        }
+
+                        if (newSelection !== menuSelection) {
+                            menuSelection = newSelection;
+                            updateMenuVisuals();
                             
-                            if (progress >= 1) {
-                                deleteWindow(activeMenuFrameId);
-                                hideMenu();
-                                menuState = 'CLOSED';
-                                menuSelection = null;
-                                isHoldingDelete = false;
+                            // Reset delete hold if we changed selection
+                            isHoldingDelete = false;
+                            bubbles.right.classList.remove('progressing');
+                            bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
+                        }
+                        
+                        // Handle 1-second hold for Delete (only in ROOT menu on Right selection)
+                        if (menuState === 'ROOT' && menuSelection === 'right') {
+                            if (!isHoldingDelete) {
+                                isHoldingDelete = true;
+                                deleteHoldStart = Date.now();
+                                bubbles.right.classList.add('progressing');
+                            } else {
+                                const holdTime = Date.now() - deleteHoldStart;
+                                const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
+                                bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
+                                
+                                if (progress >= 1) {
+                                    deleteWindow(activeMenuFrameId);
+                                    hideMenu();
+                                    menuState = 'CLOSED';
+                                    menuSelection = null;
+                                    isHoldingDelete = false;
+                                }
                             }
                         }
                     }
                 }
                 if (!hR.middlePinching && wasMiddlePinching && menuState !== 'CLOSED') {
-                    // Middle pinch released — confirm selection or transition state
-                    let transitionState = false;
-
-                    if (menuState === 'ROOT') {
-                        if (menuSelection === 'top') { menuState = 'SEARCHES'; transitionState = true; }
-                        else if (menuSelection === 'bottom') { menuState = 'APPS'; transitionState = true; }
-                        else if (menuSelection === 'left') { minimizeWindow(activeMenuFrameId); }
-                    } else if (menuState === 'APPS') {
-                        if (menuSelection === 'top') { menuState = 'ROOT'; transitionState = true; }
-                        else if (menuSelection === 'bottom') { loadContent(activeMenuFrameId, 'instagram'); }
-                        else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'youtube'); }
-                        else if (menuSelection === 'right') { loadContent(activeMenuFrameId, 'tiktok'); }
-                    } else if (menuState === 'SEARCHES') {
-                        if (menuSelection === 'bottom') { menuState = 'ROOT'; transitionState = true; }
-                        else if (menuSelection === 'top') { loadContent(activeMenuFrameId, 'google'); }
-                        else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'finder'); }
+                    // Middle pinch released — execute action if hovering over a valid endpoint
+                    if (menuSelection) {
+                        if (menuState === 'ROOT') {
+                            if (menuSelection === 'left') { minimizeWindow(activeMenuFrameId); }
+                        } else if (menuState === 'APPS') {
+                            if (menuSelection === 'bottom') { loadContent(activeMenuFrameId, 'instagram'); }
+                            else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'youtube'); }
+                            else if (menuSelection === 'right') { loadContent(activeMenuFrameId, 'tiktok'); }
+                        } else if (menuState === 'SEARCHES') {
+                            if (menuSelection === 'top') { loadContent(activeMenuFrameId, 'google'); }
+                            else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'finder'); }
+                        }
                     }
 
-                    if (transitionState) {
-                        // Re-anchor the menu to the current hand position to allow continuous gesture
-                        menuStartPos = { ...hR.pos };
-                        menuSelection = null;
-                        updateMenuLabels();
-                        updateMenuVisuals();
-                        showMenu(hR.pos); // moves the physical div
-                        // Keep wasMiddlePinching TRUE so next frame continues tracking inside the new state
-                        wasMiddlePinching = true;
-                        // But physically, the user let go? Wait, if they let go, the menu should CLOSE unless they are holding it?
-                        // If they RELEASE to select a submenu, they have to PINCH AGAIN? 
-                        // Ah! Usually holding is better, but since they released to select:
-                        // No, the user wants "sub section of bubles and to go back there will be a buble".
-                        // Wait, if they release, let's keep the menu open but require them to move to the new bubble?
-                        // No. Gestures usually: Pinch Middle -> Drag -> Release. 
-                        // If they Release on 'top' (Searches), it enters Searches state, but wait, their hand is no longer pinching.
-                        // So next frame, middlePinching = false.
-                        // If they want to select from Searches, they have to Pinch Middle again? Yes, that's more stable!
-                        // Let's close the menu on final action.
-                        // Actually, if we transitionstate = true, it means we don't close. We just wait for them to pinch and drag again? No, if we keep `menuState != 'CLOSED'`, the menu stays on screen waiting for the next pinch!
-                        // That is perfect! They drag up, release. Menu stays open. They move hand to new bubble, pinch-drag to select.
-                        // BUT `menuStartPos` is only set on pinch.
-
-                    }
-
-                    if (!transitionState) {
-                        hideMenu();
-                        menuState = 'CLOSED';
-                        menuSelection = null;
-                        isHoldingDelete = false;
-                    }
+                    // Always close menu on release
+                    hideMenu();
+                    menuState = 'CLOSED';
+                    menuSelection = null;
+                    isHoldingDelete = false;
                 }
                 wasMiddlePinching = hR.middlePinching;
 
