@@ -6,12 +6,13 @@
     <title>Hand-Tracked Window Manager</title>
     <style>
         :root {
-            --glass: rgba(255, 255, 255, 0.1);
-            --glass-border: rgba(255, 255, 255, 0.2);
-            --neon-blue: #00f2ff;
-            --neon-purple: #bc13fe;
-            --danger: #ff3b30;
-            --mac-bg: rgba(30, 30, 30, 0.9);
+            --glass: rgba(255, 255, 255, 0.08);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --glass-active: rgba(255, 255, 255, 0.25);
+            --neon-blue: rgba(255, 255, 255, 0.9);
+            --neon-purple: rgba(255, 255, 255, 0.7);
+            --danger: #ff453a;
+            --mac-bg: rgba(255, 255, 255, 0.1);
         }
 
         * {
@@ -22,7 +23,7 @@
         }
 
         body {
-            background: #000;
+            background: #1a1a1a;
             overflow: hidden;
             font-family: 'Outfit', sans-serif;
             color: #fff;
@@ -38,7 +39,7 @@
             object-fit: cover;
             transform: scaleX(-1);
             z-index: 0;
-            opacity: 0.6;
+            opacity: 1.0;
         }
 
         /* Overlay Canvas for Hand Tracking Visuals */
@@ -65,13 +66,14 @@
         /* Window Frame Styles */
         .window-frame {
             position: absolute;
-            border: 2px solid rgba(0, 242, 255, 0.4);
-            background: rgba(0, 20, 40, 0.6);
-            backdrop-filter: blur(10px);
-            border-radius: 12px;
-            box-shadow: 0 0 20px rgba(0, 242, 255, 0.2);
+            border: 1px solid var(--glass-border);
+            background: var(--glass);
+            backdrop-filter: blur(25px) saturate(180%);
+            -webkit-backdrop-filter: blur(25px) saturate(180%);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
             overflow: hidden;
-            transition: border-color 0.2s, box-shadow 0.2s, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             transform-origin: top left;
         }
 
@@ -81,8 +83,8 @@
         }
 
         .window-frame.active {
-            box-shadow: 0 0 30px var(--neon-blue);
-            border-color: var(--neon-blue);
+            box-shadow: 0 0 0 2px var(--glass-active), 0 20px 40px rgba(0,0,0,0.4);
+            border-color: rgba(255,255,255,0.4);
             z-index: 100;
         }
 
@@ -140,9 +142,9 @@
         #bubble-right { transform: translateX(80px); }
 
         .bubble.active {
-            background: rgba(0, 242, 255, 0.8);
-            color: #000;
-            box-shadow: 0 0 20px rgba(0, 242, 255, 0.8);
+            background: var(--glass-active);
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.2), inset 0 0 0 2px rgba(255,255,255,0.4);
+            border-color: rgba(255,255,255,0.6);
         }
 
         #bubble-right.active {
@@ -239,14 +241,22 @@
         /* Virtual Cursors */
         #virtual-cursor, #virtual-cursor-left {
             position: fixed;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             border-radius: 50%;
             pointer-events: none;
             z-index: 1000;
             display: none;
-            mix-blend-mode: difference;
-            transition: transform 0.1s ease;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(5px);
+            transition: transform 0.1s ease, background 0.2s, border-color 0.2s;
+        }
+        
+        #virtual-cursor.clicking, #virtual-cursor-left.clicking {
+            transform: scale(0.8);
+            background: rgba(255, 255, 255, 0.8);
+            border-color: #fff;
         }
 
         #virtual-cursor {
@@ -642,30 +652,30 @@
          */
         function drawHandMarker(h, isRight, progress) {
             if (h.isManipulationMode) return;
-
+ 
             const { pos, pinchAmount, isOpen, isFist } = h;
-            const color = isRight ? '0, 242, 255' : '188, 19, 254';
+            const color = isRight ? '255, 255, 255' : '220, 220, 220'; // Neutral glass palette
             
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = `rgba(${color}, ${0.5 + pinchAmount * 0.5})`;
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = `rgba(${color}, ${0.3 + pinchAmount * 0.4})`;
             
             if (progress > 0 && progress < 1.05) {
                 ctx.beginPath();
                 ctx.arc(pos.x, pos.y, 40, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * Math.min(progress, 1)));
-                ctx.strokeStyle = `rgba(${color}, 1)`;
-                ctx.lineWidth = 4;
+                ctx.strokeStyle = `rgba(255, 255, 255, 0.9)`;
+                ctx.lineWidth = 3;
                 ctx.stroke();
             }
-
+ 
             ctx.beginPath();
             const radius = (isOpen ? 22 : (isFist ? 25 : 12)) + pinchAmount * 6;
             ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = (isOpen || isFist) ? `rgba(${color}, 0.8)` : `rgba(255, 255, 255, ${0.3 + pinchAmount * 0.7})`;
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = (isOpen || isFist) ? `rgba(${color}, 0.6)` : `rgba(255, 255, 255, ${0.2 + pinchAmount * 0.5})`;
+            ctx.lineWidth = 1.5;
             ctx.stroke();
             
             if (isFist) {
-                ctx.fillStyle = `rgba(${color}, ${0.4 + pinchAmount * 0.4})`;
+                ctx.fillStyle = `rgba(${color}, ${0.1 + pinchAmount * 0.2})`;
                 ctx.fill();
             }
             ctx.shadowBlur = 0;
