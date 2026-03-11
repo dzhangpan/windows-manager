@@ -331,8 +331,8 @@
 
         // Gesture state stabilization (counters for hysteresis)
         let gestureState = {
-            left: { pinch: 0, middlePinch: 0 },
-            right: { pinch: 0, middlePinch: 0 }
+            left: { pinch: 0, middlePinch: 0, open: 0, fist: 0 },
+            right: { pinch: 0, middlePinch: 0, open: 0, fist: 0 }
         };
         const GESTURE_THRESHOLD = 2; // Frames to confirm a gesture change
 
@@ -405,26 +405,36 @@
                     const isOpen = isHandOpen(lm);
                     const ist = isFist(lm);
 
-                    // Stabilize gestures (Pinch Hysteresis)
+                    // Stabilize ALL gestures (Hysteresis)
                     if (isPinching) gestureState[side].pinch = Math.min(gestureState[side].pinch + 1, GESTURE_THRESHOLD + 1);
                     else gestureState[side].pinch = Math.max(gestureState[side].pinch - 1, 0);
 
                     if (isMiddlePinching) gestureState[side].middlePinch = Math.min(gestureState[side].middlePinch + 1, GESTURE_THRESHOLD + 1);
                     else gestureState[side].middlePinch = Math.max(gestureState[side].middlePinch - 1, 0);
 
+                    if (isOpen) gestureState[side].open = Math.min(gestureState[side].open + 1, GESTURE_THRESHOLD + 1);
+                    else gestureState[side].open = Math.max(gestureState[side].open - 1, 0);
+
+                    if (ist) gestureState[side].fist = Math.min(gestureState[side].fist + 1, GESTURE_THRESHOLD + 1);
+                    else gestureState[side].fist = Math.max(gestureState[side].fist - 1, 0);
+
                     const pinchStable = gestureState[side].pinch >= GESTURE_THRESHOLD;
                     const mPinchStable = gestureState[side].middlePinch >= GESTURE_THRESHOLD;
+                    const openStable = gestureState[side].open >= GESTURE_THRESHOLD;
+                    const fistStable = gestureState[side].fist >= GESTURE_THRESHOLD;
                     
                     const pinchPos = toScreen((thumb.x + index.x) / 2, (thumb.y + index.y) / 2);
                     const mPinchPos = toScreen((thumb.x + middle.x) / 2, (thumb.y + middle.y) / 2);
                     const palmPos = toScreen(palm.x, palm.y);
                     const indexTip = toScreen(index.x, index.y);
 
-                    // Marker (ball) follows stable pinch if active, otherwise follows open palm/fist
-                    const targetPos = (pinchStable || mPinchStable) ? (pinchStable ? pinchPos : mPinchPos) : ((isOpen || ist) ? palmPos : pinchPos);
-                    
+                    // --- TARGET LOGIC REFINEMENT ---
                     // Virtual Cursor (focus point) follows the stable pinch center exactly
                     const targetPoint = pinchStable ? pinchPos : (mPinchStable ? mPinchPos : indexTip);
+                    
+                    // Marker (ball) target - Suppress palm ball if manipulation is even partially active
+                    const isManipulationActive = gestureState[side].pinch > 0 || gestureState[side].middlePinch > 0;
+                    const targetPos = isManipulationActive ? targetPoint : (openStable || fistStable ? palmPos : indexTip);
 
                     // Apply Smoothing (Low Pass Filter)
                     if (!smoothPos[side]) {
@@ -440,37 +450,41 @@
                     handData[side] = { 
                         pos: { ...smoothPos[side] }, 
                         pointPos: { ...smoothPoint[side] }, 
-                        pinching: pinchStable, // Use stable state for interaction logic
+                        pinching: pinchStable, 
                         middlePinching: mPinchStable,
                         pinchAmount: 1 - Math.min(dIndex/PINCH_DIST, 1),
-                        isOpen: isOpen,
-                        isFist: ist,
+                        isOpen: openStable,
+                        isFist: fistStable,
+                        isManipulationMode: isManipulationActive,
                         lm: lm 
                     };
 
                     let progress = 0;
                     if (side === 'left') {
-                        if (ist) progress = holdTimerL / HOLD_CLOSE;
+                        if (fistStable) progress = holdTimerL / HOLD_CLOSE;
                     }
-                    // No progress ring needed for right hand — both actions are instant
 
-                    drawHandMarker(handData[side].pos, handData[side].pinching || handData[side].middlePinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
+                    drawHandMarker(handData[side].pos, handData[side].isManipulationMode, isRight, handData[side].pinchAmount, openStable, fistStable, progress);
                 });
 
                 // Reset smoothing and gesture state for hands not found in this frame
                 if (!foundSides.has('left')) { 
                     smoothPos.left = null; smoothPoint.left = null;
                     gestureState.left.pinch = 0; gestureState.left.middlePinch = 0;
+                    gestureState.left.open = 0; gestureState.left.fist = 0;
                 }
                 if (!foundSides.has('right')) { 
                     smoothPos.right = null; smoothPoint.right = null;
                     gestureState.right.pinch = 0; gestureState.right.middlePinch = 0;
+                    gestureState.right.open = 0; gestureState.right.fist = 0;
                 }
             } else {
                 smoothPos.left = null; smoothPoint.left = null;
                 smoothPos.right = null; smoothPoint.right = null;
+                gestureState.left.fist = 0; gestureState.left.open = 0;
                 gestureState.left.pinch = 0; gestureState.left.middlePinch = 0;
                 gestureState.right.pinch = 0; gestureState.right.middlePinch = 0;
+                gestureState.right.fist = 0; gestureState.right.open = 0;
             }
 
 
