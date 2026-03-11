@@ -300,21 +300,19 @@
         let holdTimerL = 0; 
         let holdTimerR = 0;
         let movingFrameId = null;
-        let scrollingFrameId = null;
-        let lastScrollY = 0;
         let moveOffset = { x: 0, y: 0 };
 
         const TICK_RATE = 30;
         const HOLD_MOVE = 2 * TICK_RATE; 
         const HOLD_MENU = 1 * TICK_RATE;
         const HOLD_CLOSE = 5 * TICK_RATE;
-        const CLICK_MAX_TIME = 0.8 * TICK_RATE; // Slightly more time for tap recognition
+        const CLICK_MAX_TIME = 0.5 * TICK_RATE;
 
         let lastClickTime = 0;
         const CLICK_COOLDOWN = 300;
 
-        const PINCH_DIST = 0.08; // Increased sensitivity
-        const SNAP_DIST = 100; // More generous creation snap
+        const PINCH_DIST = 0.05;
+        const SNAP_DIST = 80;
 
         // --- HAND TRACKING ---
         const hands = new Hands({
@@ -458,8 +456,8 @@
                         }
                     } else if (menuState === 'OPEN') {
                         const dy = hR.pos.y - menuStartPos.y;
-                        if (dy < -80) menuSelection = 'google'; // More intentional movement
-                        else if (dy > 80) menuSelection = 'youtube';
+                        if (dy < -40) menuSelection = 'google';
+                        else if (dy > 40) menuSelection = 'youtube';
                         else menuSelection = null;
                         updateMenuVisuals();
                     }
@@ -469,8 +467,6 @@
                         hideMenu();
                         menuState = 'CLOSED';
                         menuSelection = null;
-                    } else if (scrollingFrameId) {
-                        scrollingFrameId = null;
                     } else if (holdTimerR > 0 && holdTimerR < CLICK_MAX_TIME) {
                         if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE') {
                             simulateClick(hR.pointPos.x, hR.pointPos.y);
@@ -479,23 +475,6 @@
                     }
                     holdTimerR = 0;
                     virtualCursor.classList.remove('clicking');
-                }
-
-                // Scrolling Logic
-                if (hR && hR.pinching && !scrollingFrameId && menuState === 'CLOSED') {
-                    const hitFrame = frames.find(f => hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
-                    if (hitFrame && Math.abs(hR.pos.y - menuStartPos.y) > 20 && holdTimerR < HOLD_MENU) {
-                        scrollingFrameId = hitFrame.id;
-                        lastScrollY = hR.pos.y;
-                    }
-                }
-                if (scrollingFrameId && hR.pinching) {
-                    const el = document.getElementById(scrollingFrameId);
-                    if (el) {
-                        const dy = lastScrollY - hR.pos.y;
-                        el.scrollTop += dy * 2;
-                        lastScrollY = hR.pos.y;
-                    }
                 }
             } else {
                 virtualCursor.style.display = 'none';
