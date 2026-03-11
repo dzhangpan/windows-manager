@@ -331,6 +331,15 @@
     </div>
 
     <video id="video-bg" autoplay playsinline muted></video>
+    
+    <!-- A-Frame Scene for Spatial Data -->
+    <a-scene embedded style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; pointer-events: none;" vr-mode-ui="enabled: false">
+        <a-sky color="#030303" opacity="0.1"></a-sky>
+        <a-entity id="data-container" position="0 1.6 -3"></a-entity>
+        <a-entity light="type: ambient; color: #BBB"></a-entity>
+        <a-entity light="type: directional; color: #FFF; intensity: 0.6" position="-0.5 1 1"></a-entity>
+    </a-scene>
+
     <canvas id="overlay-canvas"></canvas>
     <div id="windows-container"></div>
     <div id="virtual-cursor"></div>
@@ -365,6 +374,7 @@
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
 
     <script>
         /**
@@ -427,6 +437,11 @@
         let startPinchPos = null;
         let currentPreviewFrame = null;
         let creationSpark = 0;
+
+        let extractionState = 'IDLE'; // IDLE, DRAGGING, EXTRACTED
+        let extractedFile = null;
+        let extractionTether = { active: false, start: { x: 0, y: 0 }, end: { x: 0, y: 0 } };
+        let activeTerrain = null;
 
         let menuState = 'CLOSED'; // CLOSED, ROOT, APPS, SEARCHES
         let activeMenuFrameId = null;
@@ -712,6 +727,12 @@
             virtualCursor.style.left = `${hR.pointPos.x - 10}px`;
             virtualCursor.style.top = `${hR.pointPos.y - 10}px`;
             
+            handleExtraction(hR, true);
+            
+            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') {
+                return;
+            }
+
             handleRightHandPinch(hR);
             handleRightHandMenu(hR);
         }
@@ -883,8 +904,9 @@
             virtualCursorLeft.style.left = `${hL.pointPos.x - 10}px`;
             virtualCursorLeft.style.top = `${hL.pointPos.y - 10}px`;
             virtualCursorLeft.classList.toggle('clicking', hL.pinching || hL.middlePinching);
+            handleExtraction(hL, false);
             
-            if (creationState !== 'IDLE' || menuState !== 'CLOSED') return;
+            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') return;
 
             const hitFrame = (movingFrameId || resizingFrameId) 
                 ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
@@ -974,6 +996,7 @@
             
             windowsContainer.appendChild(div);
             frames.push({ ...rect, id });
+            loadContent(id, 'finder');
         }
 
         /**
@@ -1142,37 +1165,130 @@
             return `
                 <div style="background:var(--mac-bg); height:100%; border-radius:12px; display:flex; flex-direction:column; color:#fff; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
                     <div style="display:flex; align-items:center; padding:12px; border-bottom:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);">
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; width:100px;">
                             <div style="width:12px; height:12px; border-radius:50%; background:#ff5f56;"></div>
                             <div style="width:12px; height:12px; border-radius:50%; background:#ffbd2e;"></div>
                             <div style="width:12px; height:12px; border-radius:50%; background:#27c93f;"></div>
                         </div>
-                        <div style="flex-grow:1; text-align:center; font-size:13px; font-weight:600; color:#ddd; margin-left:-48px;">Desktop</div>
+                        <div style="flex-grow:1; text-align:center; font-size:13px; font-weight:600; color:#ddd;">Desktop</div>
+                        <div style="width:100px; display:flex; justify-content:flex-end;">
+                            <div style="background:rgba(255,255,255,0.1); border-radius:4px; padding:2px 8px; font-size:11px; color:#888;">🔍 Search</div>
+                        </div>
                     </div>
                     <div style="display:flex; flex-grow:1; overflow:hidden;">
                         <div style="width:140px; border-right:1px solid rgba(255,255,255,0.1); background:rgba(20,20,20,0.5); padding:10px 0;">
                             <div style="padding:0 12px; margin-bottom:5px; font-size:11px; color:#888; font-weight:600;">Favorites</div>
-                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;">AirDrop</div>
-                            <div style="padding:5px 12px; font-size:13px; background:rgba(255,255,255,0.1); border-radius:4px; margin:0 4px;">Desktop</div>
-                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;">Documents</div>
+                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;" class="finder-item">AirDrop</div>
+                            <div style="padding:5px 12px; font-size:13px; background:rgba(255,255,255,0.1); border-radius:4px; margin:0 4px;" class="finder-item">Desktop</div>
+                            <div style="padding:5px 12px; font-size:13px; cursor:pointer;" class="finder-item">Documents</div>
                         </div>
-                        <div style="flex-grow:1; padding:20px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:25px; overflow-y:auto;">
-                            <div style="text-align:center; width:70px; cursor:pointer;">
-                                <div style="font-size:40px; margin-bottom:5px;">📁</div>
-                                <div style="font-size:12px;">VIBECODING</div>
+                        <div style="flex-grow:1; padding:20px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:25px; overflow-y:auto;" id="finder-content">
+                            <!-- Q1 DATA SHOULD BE FIRST -->
+                            <div class="spatial-data-file active-file" data-file-type="excel" style="text-align:center; width:80px; cursor:pointer; padding:10px; border:1px solid rgba(255,255,255,0.2); border-radius:12px; background:rgba(255,255,255,0.05);">
+                                <div style="font-size:40px; margin-bottom:5px;">📊</div>
+                                <div style="font-size:11px; font-weight:600;">Q1_Data.xlsx</div>
                             </div>
-                            <div style="text-align:center; width:70px; cursor:pointer;">
+                            <div style="text-align:center; width:80px; cursor:pointer; padding:10px;" class="finder-item">
+                                <div style="font-size:40px; margin-bottom:5px;">📁</div>
+                                <div style="font-size:11px;">VIBECODING</div>
+                            </div>
+                            <div style="text-align:center; width:80px; cursor:pointer; padding:10px;" class="finder-item">
                                 <div style="font-size:40px; margin-bottom:5px;">📄</div>
-                                <div style="font-size:12px;">notes.md</div>
+                                <div style="font-size:11px;">notes.md</div>
                             </div>
                         </div>
                     </div>
                 </div>`;
         }
 
+
+        /**
+         * @description Handles the "Pinch and Pull" extraction of data from windows.
+         * @param {Object} h Hand data
+         * @param {boolean} isRight Whether it is the right hand
+         */
+        function handleExtraction(h, isRight) {
+            if (extractionState === 'IDLE' && h.pinching && !wasIndexPinching) {
+                const el = document.elementFromPoint(h.pointPos.x, h.pointPos.y);
+                if (el?.closest('.spatial-data-file')) {
+                    extractionState = 'DRAGGING';
+                    extractedFile = {
+                        type: el.closest('.spatial-data-file').dataset.fileType,
+                        name: el.closest('.spatial-data-file').innerText.trim(),
+                        originWindow: frames.find(f => !f.isMinimized && h.pos.x > f.x && h.pos.x < f.x + f.w && h.pos.y > f.y && h.pos.y < f.y + f.h)
+                    };
+                    extractionTether.active = true;
+                    extractionTether.start = { ...h.pointPos };
+                    extractionTether.end = { ...h.pointPos };
+                }
+            }
+
+            if (extractionState === 'DRAGGING' && h.pinching) {
+                extractionTether.end = { ...h.pointPos };
+                
+                const frame = extractedFile.originWindow;
+                if (frame) {
+                    const outOfBounds = h.pointPos.x < frame.x - 40 || h.pointPos.x > frame.x + frame.w + 40 ||
+                                       h.pointPos.y < frame.y - 40 || h.pointPos.y > frame.y + frame.h + 40;
+                    
+                    if (outOfBounds) {
+                        instantiate3DData(h.pointPos);
+                        extractionState = 'EXTRACTED';
+                        extractionTether.active = false;
+                    }
+                }
+            }
+
+            if (!h.pinching && (extractionState === 'DRAGGING' || extractionState === 'EXTRACTED')) {
+                extractionState = 'IDLE';
+                extractionTether.active = false;
+            }
+        }
+
+        /**
+         * @description Generates the 3D topographic terrain in A-Frame.
+         * @param {Object} pos Extraction trigger position
+         */
+        function instantiate3DData(pos) {
+            const container = document.getElementById('data-container');
+            container.innerHTML = ''; // Clear previous
+            
+            // Create topographic data terrain
+            const step = 0.4;
+            for(let x=-3; x<=3; x+=step) {
+                for(let z=-3; z<=3; z+=step) {
+                    const dist = Math.sqrt(x*x + z*z);
+                    const h = (Math.sin(dist * 2) + 1.2) * (1.5 / (dist + 1)); // Topo-like peak
+                    
+                    const box = document.createElement('a-box');
+                    box.setAttribute('position', `${x} ${h/2} ${z}`);
+                    box.setAttribute('width', step * 0.8);
+                    box.setAttribute('depth', step * 0.8);
+                    box.setAttribute('height', h);
+                    box.setAttribute('material', `
+                        color: #ffffff; 
+                        opacity: ${0.4 + (h/3) * 0.4}; 
+                        emissive: #fff; 
+                        emissiveIntensity: 0.2;
+                        transparent: true;
+                    `);
+                    container.appendChild(box);
+                }
+            }
+
+            createPoof(pos.x, pos.y);
+            
+            // HUD feedback
+            const debug = document.getElementById('debug-hud');
+            debug.innerText = `INSTANTIATED: ${extractedFile.name} as 3D Terrain`;
+            setTimeout(() => debug.innerText = 'TRACKING ACTIVE', 3000);
+        }
+
         function simulateClick(x, y) {
             const el = document.elementFromPoint(x, y);
             if (!el) return;
+            
+            console.log(`Spatial Tap at (${Math.round(x)}, ${Math.round(y)}) on:`, el.tagName, el.className || 'no-class');
             
             // Handle Window Focus
             const winFrame = el.closest('.window-frame');
@@ -1190,6 +1306,9 @@
             el.dispatchEvent(new MouseEvent('mouseup', mouseParams));
             el.dispatchEvent(new MouseEvent('click', mouseParams));
             
+            // Fallback for native clicks
+            if (el.click && el.tagName !== 'IFRAME') el.click();
+
             // Visual feedback
             const marker = document.createElement('div');
             marker.style.position = 'fixed';
@@ -1252,6 +1371,27 @@
                 ctx.beginPath(); ctx.moveTo(x + w - cs, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + cs); ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(x, y + h - cs); ctx.lineTo(x, y + h); ctx.lineTo(x + cs, y + h); ctx.stroke();
                 ctx.beginPath(); ctx.moveTo(x + w - cs, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - cs); ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            if (extractionTether.active) {
+                // Draw Glowing Tether
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.moveTo(extractionTether.start.x, extractionTether.start.y);
+                ctx.lineTo(extractionTether.end.x, extractionTether.end.y);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.setLineDash([5, 5]);
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // File origin pulse
+                ctx.beginPath();
+                ctx.arc(extractionTether.start.x, extractionTether.start.y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
                 ctx.shadowBlur = 0;
             }
         }
