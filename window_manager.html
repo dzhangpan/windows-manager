@@ -399,20 +399,25 @@
                     const ist = isFist(lm);
                     
                     const pinchPos = toScreen((thumb.x + index.x) / 2, (thumb.y + index.y) / 2);
+                    const mPinchPos = toScreen((thumb.x + middle.x) / 2, (thumb.y + middle.y) / 2);
                     const palmPos = toScreen(palm.x, palm.y);
-                    const pointPos = toScreen(index.x, index.y);
+                    const indexTip = toScreen(index.x, index.y);
 
-                    const targetPos = (isOpen || ist) ? palmPos : pinchPos;
+                    // Marker (ball) follows pinch if active, otherwise follows open palm/fist
+                    const targetPos = (isPinching || isMiddlePinching) ? (isPinching ? pinchPos : mPinchPos) : ((isOpen || ist) ? palmPos : pinchPos);
+                    
+                    // Virtual Cursor (focus point) follows the active pinch center exactly
+                    const targetPoint = isPinching ? pinchPos : (isMiddlePinching ? mPinchPos : indexTip);
 
                     // Apply Smoothing (Low Pass Filter)
                     if (!smoothPos[side]) {
                         smoothPos[side] = { ...targetPos };
-                        smoothPoint[side] = { ...pointPos };
+                        smoothPoint[side] = { ...targetPoint };
                     } else {
                         smoothPos[side].x += (targetPos.x - smoothPos[side].x) * SMOOTHING;
                         smoothPos[side].y += (targetPos.y - smoothPos[side].y) * SMOOTHING;
-                        smoothPoint[side].x += (pointPos.x - smoothPoint[side].x) * SMOOTHING;
-                        smoothPoint[side].y += (pointPos.y - smoothPoint[side].y) * SMOOTHING;
+                        smoothPoint[side].x += (targetPoint.x - smoothPoint[side].x) * SMOOTHING;
+                        smoothPoint[side].y += (targetPoint.y - smoothPoint[side].y) * SMOOTHING;
                     }
 
                     handData[side] = { 
@@ -451,6 +456,9 @@
         }
 
         function drawHandMarker(pos, pinching, isRight, amount, isOpen, ist, progress) {
+            // Hide the large glowing "ball" when pinching with tucked fingers to reduce clutter
+            if (pinching && !isOpen) return;
+
             const color = isRight ? '0, 242, 255' : '188, 19, 254';
             ctx.shadowBlur = 15;
             ctx.shadowColor = `rgba(${color}, ${0.5 + amount * 0.5})`;
