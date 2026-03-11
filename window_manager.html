@@ -469,7 +469,7 @@
         let lastClickTime = 0;
         let lastCreationTime = 0;
         const CLICK_COOLDOWN = 300;
-        const CREATION_COOLDOWN = 500;
+        const CREATION_COOLDOWN = 1000;
 
         const PINCH_DIST = 0.055; // Slightly increased for better reach and perspective handling
         const SNAP_DIST = 80;
@@ -737,7 +737,14 @@
             const pinchStarted = currentPinch && !wasPinchingR;
             const pinchReleased = !currentPinch && wasPinchingR;
 
-            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') {
+            if (creationState !== 'IDLE' || extractionState !== 'IDLE') {
+                wasPinchingR = currentPinch;
+                return;
+            }
+
+            // If Menu is open, we handle menu selection but skip regular pinching
+            if (menuState !== 'CLOSED') {
+                handleRightHandMenu(hR);
                 wasPinchingR = currentPinch;
                 return;
             }
@@ -917,7 +924,13 @@
             const currentPinchL = hL.pinching;
             const pinchStartedL = currentPinchL && !wasPinchingL;
             
-            if (creationState !== 'IDLE' || menuState !== 'CLOSED' || extractionState !== 'IDLE') {
+            if (creationState !== 'IDLE' || extractionState !== 'IDLE') {
+                wasPinchingL = currentPinchL;
+                return;
+            }
+            
+            // Menu doesn't block left hand usually, but let's be safe
+            if (menuState !== 'CLOSED') {
                 wasPinchingL = currentPinchL;
                 return;
             }
