@@ -1,0 +1,26 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local Logs
+*.log
+local_server.pid
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build/Temp
+dist/
+tmp/
+.temp/
+
+# Private/Config
+.env
+.gemini/

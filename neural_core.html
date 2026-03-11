@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Core</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background: #000;
+        }
+
+        #video-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 0;
+        }
+
+        #fx-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <video id="video-bg" autoplay playsinline muted></video>
+    <canvas id="fx-canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+        const video = document.getElementById('video-bg');
+        const canvas = document.getElementById('fx-canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        const TIPS = [4, 8, 12, 16, 20];
+        const MIDS = [3, 6, 10, 14, 18];
+        let hLandmarks = [];
+        let frame = 0;
+
+        /**
+         * Convert normalized landmark to mirrored screen coordinates
+         * @param {object} lm - Landmark {x, y}
+         * @returns {{x: number, y: number}}
+         */
+        function toScr(lm) {
+            return { x: (1 - lm.x) * canvas.width, y: lm.y * canvas.height };
+        }
+
+        /**
+         * Generate random data label (J85410 style)
+         * @returns {string}
+         */
+        function label() {
+            const p = ['J','I',''][Math.floor(Math.random()*3)];
+            return p + (Math.floor(Math.random()*90000)+10000);
+        }
+
+        // ── Persistent outward ray angles (1-2 per finger, per hand) ──
+        const rayAngles = [[],[]];
+        for (let h = 0; h < 2; h++) {
+            for (let f = 0; f < 5; f++) {
+                const n = Math.random() < 0.5 ? 1 : 2;
+                const a = [];
+                for (let i = 0; i < n; i++) a.push((Math.random()-0.5)*0.7);
+                rayAngles[h][f] = a;
+            }
+        }
+
+        // ── Sparkle particles along lines ──
+        // Persistent pool that drifts slowly and respawns
+        const sparkles = [];
+        const MAX_SPARKLES = 200;
+
+        class Sparkle {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.vx = (Math.random()-0.5)*0.5;
+                this.vy = (Math.random()-0.5)*0.5;
+                this.life = 0.5 + Math.random()*1.5;
+                this.maxLife = this.life;
+                this.size = 0.5 + Math.random()*1.5;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.016;
+            }
+            get alive() { return this.life > 0; }
+            get alpha() { return Math.max(0, this.life / this.maxLife); }
+        }
+
+        // ── Label cache for consistent but changing labels ──
+        const labelMap = {};
+        function getLabel(key) {
+            if (!labelMap[key] || frame % (6 + (key.length % 12)) === 0) {
+                labelMap[key] = label();
+            }
+            return labelMap[key];
+        }
+
+        // ────────────────────────────────────────────
+        // DRAWING PRIMITIVES
+        // ────────────────────────────────────────────
+
+        /**
+         * Draw glitchy line with subtle segment drops
+         */
+        function gLine(x1, y1, x2, y2, a, w, g) {
+            if (a < 0.02) return;
+            const dx = x2-x1, dy = y2-y1;
+            const d = Math.sqrt(dx*dx+dy*dy);
+            if (d < 2) return;
+            ctx.save();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = w;
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = g;
+            ctx.lineCap = 'round';
+            const segs = Math.max(3, Math.floor(d / 60));
+            const sl = 1/segs;
+            for (let s = 0; s < segs; s++) {
+                if (Math.random() < 0.08) continue;
+                const t0 = s*sl;
+                const t1 = Math.min(t0+sl*0.92, 1);
+                ctx.globalAlpha = a * (0.7+Math.random()*0.3);
+                ctx.beginPath();
+                ctx.moveTo(x1+dx*t0, y1+dy*t0);
+                ctx.lineTo(x1+dx*t1, y1+dy*t1);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        /** Draw a solid bright line */
+        function sLine(x1, y1, x2, y2, a, w, g) {
+            if (a < 0.02) return;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = w;
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = g;
+            ctx.beginPath();
+            ctx.moveTo(x1,y1);
+            ctx.lineTo(x2,y2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        /** Draw circle ring outline */
+        function ring(x, y, r, a) {
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.2;
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI*2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        /** Draw filled dot */
+        function dot(x, y, r, a) {
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        /** Draw bloom/glow spot */
+        function bloom(x, y, r, a) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            const g = ctx.createRadialGradient(x,y,0,x,y,r);
+            g.addColorStop(0, `rgba(255,255,255,${a})`);
+            g.addColorStop(0.2, `rgba(255,255,255,${a*0.6})`);
+            g.addColorStop(0.5, `rgba(255,255,255,${a*0.15})`);
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(x,y,r,0,Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        /** Draw data label */
+        function lbl(text, x, y, a) {
+            if (a < 0.05) return;
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.font = '10px "Courier New",monospace';
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = 2;
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+
+        // ────────────────────────────────────────────
+        // MAIN RENDER
+        // ────────────────────────────────────────────
+
+        function drawFrame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.globalCompositeOperation = 'lighter';
+
+            // Update sparkles
+            sparkles.forEach(s => s.update());
+            for (let i = sparkles.length-1; i >= 0; i--) {
+                if (!sparkles[i].alive) sparkles.splice(i,1);
+            }
+
+            if (hLandmarks.length === 0) return;
+
+            // Collect all anchor points (fingertips) and all line segments
+            const anchors = []; // {x,y,hIdx,fIdx}
+            const segments = []; // {x1,y1,x2,y2,thick}
+
+            hLandmarks.forEach((lm, hIdx) => {
+                const pts = lm.map(toScr);
+
+                for (let f = 0; f < TIPS.length; f++) {
+                    const tip = pts[TIPS[f]];
+                    anchors.push({ x: tip.x, y: tip.y, hIdx, fIdx: f });
+                }
+            });
+
+            // ── A. FINGERTIP-TO-FINGERTIP within same hand ──
+            hLandmarks.forEach((lm, hIdx) => {
+                const pts = lm.map(toScr);
+                for (let i = 0; i < TIPS.length; i++) {
+                    for (let j = i+1; j < TIPS.length; j++) {
+                        const a = pts[TIPS[i]], b = pts[TIPS[j]];
+                        segments.push({ x1:a.x, y1:a.y, x2:b.x, y2:b.y, thick: true });
+                    }
+                }
+            });
+
+            // ── B. OUTWARD RAYS from each fingertip (1-2 lines) ──
+            hLandmarks.forEach((lm, hIdx) => {
+                const pts = lm.map(toScr);
+                for (let f = 0; f < TIPS.length; f++) {
+                    const tip = pts[TIPS[f]];
+                    const mid = pts[MIDS[f]];
+                    const dx = tip.x-mid.x, dy = tip.y-mid.y;
+                    const len = Math.sqrt(dx*dx+dy*dy)||1;
+                    const nx = dx/len, ny = dy/len;
+
+                    for (const ao of rayAngles[hIdx][f]) {
+                        const c = Math.cos(ao), s = Math.sin(ao);
+                        const rx = nx*c - ny*s, ry = nx*s + ny*c;
+                        const dist = 250 + Math.random()*200;
+                        segments.push({
+                            x1: tip.x, y1: tip.y,
+                            x2: tip.x + rx*dist, y2: tip.y + ry*dist,
+                            thick: false
+                        });
+                    }
+                }
+            });
+
+            // ── C. INTER-HAND connections ──
+            if (hLandmarks.length === 2) {
+                const p1 = hLandmarks[0].map(toScr);
+                const p2 = hLandmarks[1].map(toScr);
+
+                // Corresponding tips
+                for (const t of TIPS) {
+                    segments.push({ x1:p1[t].x, y1:p1[t].y, x2:p2[t].x, y2:p2[t].y, thick:true });
+                }
+                // Cross-tips
+                for (let i = 0; i < TIPS.length; i++) {
+                    for (let j = 0; j < TIPS.length; j++) {
+                        if (i===j) continue;
+                        segments.push({ x1:p1[TIPS[i]].x, y1:p1[TIPS[i]].y, x2:p2[TIPS[j]].x, y2:p2[TIPS[j]].y, thick:false });
+                    }
+                }
+
+                // Intense center bloom
+                const cx = (p1[9].x+p2[9].x)/2, cy = (p1[9].y+p2[9].y)/2;
+                bloom(cx, cy, 80, 0.7);
+                bloom(cx, cy, 40, 0.9);
+            }
+
+            // ── D. DRAW ALL SEGMENTS ──
+            for (const seg of segments) {
+                if (seg.thick) {
+                    gLine(seg.x1,seg.y1,seg.x2,seg.y2, 0.7, 2, 20);
+                } else {
+                    gLine(seg.x1,seg.y1,seg.x2,seg.y2, 0.35, 0.8, 10);
+                }
+            }
+
+            // ── E. GENERATE INTERMEDIATE NODES ──
+            // Place nodes along each segment, then connect nearby nodes
+            // across different segments → THIS creates the dense web mesh
+            const nodes = [];
+            for (let si = 0; si < segments.length; si++) {
+                const seg = segments[si];
+                const dx = seg.x2-seg.x1, dy = seg.y2-seg.y1;
+                const dist = Math.sqrt(dx*dx+dy*dy);
+                const count = Math.max(1, Math.floor(dist / 80));
+                for (let n = 0; n < Math.min(count, 10); n++) {
+                    const t = (n+1)/(count+1);
+                    // Small random jitter
+                    const jx = (Math.random()-0.5)*6;
+                    const jy = (Math.random()-0.5)*6;
+                    nodes.push({
+                        x: seg.x1 + dx*t + jx,
+                        y: seg.y1 + dy*t + jy,
+                        segIdx: si,
+                        t: t,
+                        a: seg.thick ? 0.6 : 0.35
+                    });
+                }
+            }
+
+            // ── F. CROSS-CONNECT NEARBY NODES on DIFFERENT segments ──
+            const cRad = 130;
+            const cRadSq = cRad*cRad;
+            for (let i = 0; i < nodes.length; i++) {
+                const ni = nodes[i];
+                for (let j = i+1; j < nodes.length; j++) {
+                    const nj = nodes[j];
+                    if (ni.segIdx === nj.segIdx) continue; // same segment, skip
+                    const ddx = ni.x-nj.x, ddy = ni.y-nj.y;
+                    const dSq = ddx*ddx + ddy*ddy;
+                    if (dSq < cRadSq && dSq > 300) {
+                        const prox = 1 - Math.sqrt(dSq)/cRad;
+                        const ca = prox * Math.min(ni.a, nj.a) * 0.35;
+                        if (ca > 0.02) {
+                            gLine(ni.x, ni.y, nj.x, nj.y, ca, 0.5, 4);
+                        }
+                    }
+                }
+            }
+
+            // ── G. DRAW NODES: dots, BIG circles, data labels ──
+            for (let i = 0; i < nodes.length; i++) {
+                const n = nodes[i];
+                const na = n.a * (0.5 + Math.random()*0.4);
+
+                // Dot at every node
+                dot(n.x, n.y, 1.5, na * 0.8);
+
+                // Circle ring — ~30% of nodes, BIG radius (15-40px)
+                const hash = (n.segIdx * 7 + i * 13) % 100;
+                if (hash < 30) {
+                    const cr = 15 + (hash % 25);
+                    ring(n.x, n.y, cr, na * 0.5);
+                }
+
+                // Data label — constantly changing
+                const key = `n${n.segIdx}-${i}`;
+                const lb = getLabel(key);
+                const lox = (hash % 3 === 0) ? -40 : 6;
+                const loy = (hash % 2 === 0) ? -8 : 12;
+                lbl(lb, n.x+lox, n.y+loy, na * 0.75);
+
+                // Spawn sparkles near nodes occasionally
+                if (Math.random() < 0.05 && sparkles.length < MAX_SPARKLES) {
+                    sparkles.push(new Sparkle(
+                        n.x + (Math.random()-0.5)*30,
+                        n.y + (Math.random()-0.5)*30
+                    ));
+                }
+            }
+
+            // ── H. FINGERTIP BLOOMS ──
+            for (const anchor of anchors) {
+                bloom(anchor.x, anchor.y, 20, 0.4);
+                dot(anchor.x, anchor.y, 3, 0.9);
+            }
+
+            // ── I. DRAW SPARKLES ──
+            for (const sp of sparkles) {
+                dot(sp.x, sp.y, sp.size, sp.alpha * 0.6);
+            }
+
+
+            frame++;
+        }
+
+        // ────────────────────────────────────────────
+        // MEDIAPIPE HAND TRACKING
+        // ────────────────────────────────────────────
+        const hands = new Hands({
+            locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+        });
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(res => {
+            hLandmarks = res.multiHandLandmarks || [];
+        });
+
+        const mCamera = new Camera(video, {
+            onFrame: async () => { await hands.send({ image: video }); },
+            width: 1280,
+            height: 720
+        });
+        mCamera.start();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            drawFrame();
+        }
+        animate();
+    </script>
+</body>
+</html>

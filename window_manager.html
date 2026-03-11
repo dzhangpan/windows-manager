@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand-Tracked Window Manager</title>
+    <style>
+        :root {
+            --glass: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --neon-blue: #00f2ff;
+            --neon-purple: #bc13fe;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Outfit', sans-serif;
+            color: #fff;
+        }
+
+        /* Fullscreen Video Background */
+        #video-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 0;
+            opacity: 0.6;
+        }
+
+        /* Overlay Canvas for Hand Tracking Visuals */
+        #overlay-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        /* Windows Container */
+        #windows-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 5;
+        }
+
+        .window-frame {
+            position: absolute;
+            background: var(--glass);
+            backdrop-filter: blur(15px);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            overflow: hidden;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+        }
+
+        .window-frame.active {
+            box-shadow: 0 0 20px var(--neon-blue);
+            border-color: var(--neon-blue);
+        }
+
+        .window-frame iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #000;
+        }
+
+        /* Floating Menu Bubbles */
+        .bubble-menu {
+            position: fixed;
+            z-index: 15;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            opacity: 0;
+            transform: scale(0.5);
+            transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .bubble-menu.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .bubble {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 2px solid var(--glass-border);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .bubble.active {
+            transform: scale(1.2);
+            background: rgba(255, 255, 255, 0.2);
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 15px var(--neon-blue);
+        }
+
+        .bubble::after {
+            content: attr(data-label);
+            position: absolute;
+            left: 75px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            opacity: 0.7;
+        }
+
+        /* Virtual Cursor */
+        #virtual-cursor {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            mix-blend-mode: difference;
+            transition: transform 0.1s ease;
+        }
+
+        #virtual-cursor.clicking {
+            transform: scale(0.6);
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        /* Loading UI */
+        #loading {
+            position: fixed;
+            inset: 0;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 1s ease;
+        }
+
+        .loader-ring {
+            width: 50px;
+            height: 50px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-top: 2px solid var(--neon-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .hud-hint {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 10px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            opacity: 0.4;
+            z-index: 20;
+            text-align: center;
+        }
+
+        .security-note {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            font-size: 9px;
+            color: rgba(255, 255, 255, 0.3);
+            text-align: right;
+            max-width: 200px;
+            pointer-events: none;
+            z-index: 20;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="loading">
+        <div class="loader-ring"></div>
+        <p>INITIALIZING NEURAL INTERFACE...</p>
+    </div>
+
+    <video id="video-bg" autoplay playsinline muted></video>
+    <canvas id="overlay-canvas"></canvas>
+    <div id="windows-container"></div>
+    <div id="virtual-cursor"></div>
+
+    <div id="gesture-hud" class="hud-hint">
+        PINCH BOTH HANDS TO CREATE FRAME<br>
+        LEFT FIST (5s) TO CLOSE | LEFT PINCH (2s) TO MOVE<br>
+        RIGHT PINCH (2s) FOR MENU | QUICK PINCH TO CLICK
+    </div>
+
+    <div class="security-note">
+        NOTE: INTERACTION WITH EXTERNAL SITES REQUIRES CHROME FLAG --DISABLE-WEB-SECURITY.
+    </div>
+
+    <div id="menu-container" class="bubble-menu">
+        <div class="bubble" data-label="Google" id="bubble-google">G</div>
+        <div class="bubble" data-label="YouTube" id="bubble-youtube">Y</div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+        /**
+         * Window Manager - Gesture Controlled UI
+         * Refactored for hold-based interaction model.
+         */
+
+        const video = document.getElementById('video-bg');
+        const canvas = document.getElementById('overlay-canvas');
+        const ctx = canvas.getContext('2d');
+        const windowsContainer = document.getElementById('windows-container');
+        const menuContainer = document.getElementById('menu-container');
+        const virtualCursor = document.getElementById('virtual-cursor');
+        const bubbles = {
+            google: document.getElementById('bubble-google'),
+            youtube: document.getElementById('bubble-youtube')
+        };
+
+        let width, height;
+        let vMetrics = { dw: 0, dh: 0, ox: 0, oy: 0 };
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            const vw = video.videoWidth || 1280;
+            const vh = video.videoHeight || 720;
+            const aspect = vw / vh;
+            const winAspect = width / height;
+
+            if (winAspect > aspect) {
+                vMetrics.dw = width;
+                vMetrics.dh = width / aspect;
+                vMetrics.ox = 0;
+                vMetrics.oy = (height - vMetrics.dh) / 2;
+            } else {
+                vMetrics.dh = height;
+                vMetrics.dw = height * aspect;
+                vMetrics.ox = (width - vMetrics.dw) / 2;
+                vMetrics.oy = 0;
+            }
+        }
+
+        window.addEventListener('resize', resize);
+
+        function toScreen(nx, ny) {
+            return {
+                x: vMetrics.ox + (1.0 - nx) * vMetrics.dw,
+                y: vMetrics.oy + ny * vMetrics.dh
+            };
+        }
+
+        // --- GESTURE STATE ---
+        let frames = [];
+        let creationState = 'IDLE'; 
+        let startPinchPos = null;
+        let currentPreviewFrame = null;
+        let creationSpark = 0;
+
+        let menuState = 'CLOSED'; 
+        let activeMenuFrameId = null;
+        let menuSelection = null; 
+        let menuStartPos = null;
+
+        let holdTimerL = 0; 
+        let holdTimerR = 0;
+        let movingFrameId = null;
+        let moveOffset = { x: 0, y: 0 };
+
+        const TICK_RATE = 30;
+        const HOLD_MOVE = 2 * TICK_RATE; 
+        const HOLD_MENU = 1 * TICK_RATE;
+        const HOLD_CLOSE = 5 * TICK_RATE;
+        const CLICK_MAX_TIME = 0.5 * TICK_RATE; 
+
+        let lastClickTime = 0;
+        const CLICK_COOLDOWN = 300;
+
+        const PINCH_DIST = 0.05;
+        const SNAP_DIST = 80;
+
+        // --- HAND TRACKING ---
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        function getDist(a, b) {
+            return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+        }
+
+        function isHandOpen(lm) {
+            const tips = [8, 12, 16, 20];
+            const mcps = [5, 9, 13, 17];
+            const wrist = lm[0];
+            let extended = 0;
+            tips.forEach((tipIdx, i) => {
+                if (getDist(lm[tipIdx], wrist) > getDist(lm[mcps[i]], wrist)) extended++;
+            });
+            if (getDist(lm[4], lm[0]) > getDist(lm[2], lm[0])) extended++;
+            return extended >= 4;
+        }
+
+        function isFist(lm) {
+            const tips = [8, 12, 16, 20];
+            const midJoints = [6, 10, 14, 18];
+            const wrist = lm[0];
+            let closedCount = 0;
+            tips.forEach((tipIdx, i) => {
+                if (getDist(lm[tipIdx], wrist) < getDist(lm[midJoints[i]], wrist)) closedCount++;
+            });
+            if (getDist(lm[4], lm[0]) < getDist(lm[3], lm[0])) closedCount++;
+            return closedCount >= 4;
+        }
+
+        hands.onResults(onResults);
+
+        function onResults(results) {
+            ctx.clearRect(0, 0, width, height);
+            let handData = { left: null, right: null };
+
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                results.multiHandLandmarks.forEach((lm, i) => {
+                    const label = results.multiHandedness[i].label; 
+                    const isRight = label === 'Left'; 
+                    const side = isRight ? 'right' : 'left';
+
+                    const thumb = lm[4];
+                    const index = lm[8];
+                    const palm = lm[9]; 
+                    
+                    const d = getDist(thumb, index);
+                    const isPinching = d < PINCH_DIST;
+                    const isOpen = isHandOpen(lm);
+                    const ist = isFist(lm);
+                    
+                    const pinchPos = toScreen((thumb.x + index.x) / 2, (thumb.y + index.y) / 2);
+                    const palmPos = toScreen(palm.x, palm.y);
+                    const pointPos = toScreen(index.x, index.y);
+
+                    handData[side] = { 
+                        pos: (isOpen || ist) ? palmPos : pinchPos, 
+                        pointPos: pointPos, 
+                        pinching: isPinching, 
+                        pinchAmount: 1 - Math.min(d/PINCH_DIST, 1),
+                        isOpen: isOpen,
+                        isFist: ist,
+                        lm: lm 
+                    };
+
+                    let progress = 0;
+                    if (side === 'left') {
+                        if (isPinching) progress = holdTimerL / HOLD_MOVE;
+                        else if (ist) progress = holdTimerL / HOLD_CLOSE;
+                    } else {
+                        if (isPinching && menuState === 'CLOSED') progress = holdTimerR / HOLD_MENU;
+                    }
+
+                    drawHandMarker(handData[side].pos, isPinching, isRight, handData[side].pinchAmount, isOpen, ist, progress);
+                });
+            }
+
+            processGestures(handData);
+            drawUI();
+        }
+
+        function drawHandMarker(pos, pinching, isRight, amount, isOpen, ist, progress) {
+            const color = isRight ? '0, 242, 255' : '188, 19, 254';
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = `rgba(${color}, ${0.5 + amount * 0.5})`;
+            
+            if (progress > 0 && progress < 1.05) {
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 40, -Math.PI/2, -Math.PI/2 + (Math.PI * 2 * Math.min(progress, 1)));
+                ctx.strokeStyle = `rgba(${color}, 1)`;
+                ctx.lineWidth = 4;
+                ctx.stroke();
+            }
+
+            ctx.beginPath();
+            let radius = (isOpen ? 22 : (ist ? 25 : 12)) + amount * 6;
+            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            ctx.strokeStyle = (isOpen || ist) ? `rgba(${color}, 0.8)` : `rgba(255, 255, 255, ${0.3 + amount * 0.7})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            if (pinching || ist) {
+                ctx.fillStyle = `rgba(${color}, ${0.4 + amount * 0.4})`;
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+        }
+
+        function processGestures(hands) {
+            const hL = hands.left;
+            const hR = hands.right;
+
+            // --- RIGHT HAND: CURSOR, CLICK, MENU ---
+            if (hR) {
+                virtualCursor.style.display = 'block';
+                virtualCursor.style.left = (hR.pointPos.x - 10) + 'px';
+                virtualCursor.style.top = (hR.pointPos.y - 10) + 'px';
+                
+                if (hR.pinching) {
+                    holdTimerR++;
+                    virtualCursor.classList.add('clicking');
+                    if (menuState === 'CLOSED' && holdTimerR > HOLD_MENU && creationState === 'IDLE') {
+                        const hitFrame = frames.find(f => hR.pos.x > f.x && hR.pos.x < f.x + f.w && hR.pos.y > f.y && hR.pos.y < f.y + f.h);
+                        if (hitFrame) {
+                            menuState = 'OPEN';
+                            activeMenuFrameId = hitFrame.id;
+                            menuStartPos = { ...hR.pos };
+                            showMenu(hR.pos);
+                            holdTimerR = 0;
+                        }
+                    } else if (menuState === 'OPEN') {
+                        const dy = hR.pos.y - menuStartPos.y;
+                        if (dy < -40) menuSelection = 'google';
+                        else if (dy > 40) menuSelection = 'youtube';
+                        else menuSelection = null;
+                        updateMenuVisuals();
+                    }
+                } else {
+                    if (menuState === 'OPEN') {
+                        if (menuSelection) loadContent(activeMenuFrameId, menuSelection);
+                        hideMenu();
+                        menuState = 'CLOSED';
+                        menuSelection = null;
+                    } else if (holdTimerR > 0 && holdTimerR < CLICK_MAX_TIME) {
+                        if (Date.now() - lastClickTime > CLICK_COOLDOWN && creationState === 'IDLE') {
+                            simulateClick(hR.pointPos.x, hR.pointPos.y);
+                            lastClickTime = Date.now();
+                        }
+                    }
+                    holdTimerR = 0;
+                    virtualCursor.classList.remove('clicking');
+                }
+            } else {
+                virtualCursor.style.display = 'none';
+                holdTimerR = 0;
+                if (menuState === 'OPEN') {
+                    hideMenu();
+                    menuState = 'CLOSED';
+                    menuSelection = null;
+                }
+            }
+
+            // --- LEFT HAND: MOVE, CLOSE ---
+            if (hL && creationState === 'IDLE' && menuState === 'CLOSED') {
+                const hitFrame = movingFrameId ? frames.find(f => f.id === movingFrameId) : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
+                if (hitFrame) {
+                    if (hL.isFist) {
+                        holdTimerL++;
+                        if (holdTimerL > HOLD_CLOSE) {
+                            deleteWindow(hitFrame.id);
+                            holdTimerL = 0;
+                        }
+                    } else if (hL.pinching) {
+                        if (!movingFrameId) {
+                            holdTimerL++;
+                            if (holdTimerL > HOLD_MOVE) {
+                                movingFrameId = hitFrame.id;
+                                moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
+                                holdTimerL = 0;
+                            }
+                        } else {
+                            // Currently moving
+                            hitFrame.x = hL.pos.x + moveOffset.x;
+                            hitFrame.y = hL.pos.y + moveOffset.y;
+                            const el = document.getElementById(hitFrame.id);
+                            if (el) {
+                                el.style.left = hitFrame.x + 'px';
+                                el.style.top = hitFrame.y + 'px';
+                            }
+                        }
+                    } else {
+                        holdTimerL = 0;
+                        movingFrameId = null;
+                    }
+                } else {
+                    holdTimerL = 0;
+                    movingFrameId = null;
+                }
+            } else {
+                holdTimerL = 0;
+                movingFrameId = null;
+            }
+
+            // --- BOTH HANDS: CREATION ---
+            if (hL && hR && hL.pinching && hR.pinching && menuState === 'CLOSED' && !movingFrameId) {
+                const centerDist = getDist(hL.pos, hR.pos);
+                if (creationState === 'IDLE' && centerDist < SNAP_DIST) {
+                    creationState = 'TOUCHING';
+                    creationSpark = 1.0; 
+                    startPinchPos = { x: (hL.pos.x + hR.pos.x) / 2, y: (hL.pos.y + hR.pos.y) / 2 };
+                } else if (creationState === 'TOUCHING' && centerDist > SNAP_DIST + 20) {
+                    creationState = 'DRAGGING';
+                }
+                if (creationState === 'DRAGGING') {
+                    const x1 = Math.min(hL.pos.x, hR.pos.x);
+                    const y1 = Math.min(hL.pos.y, hR.pos.y);
+                    const x2 = Math.max(hL.pos.x, hR.pos.x);
+                    const y2 = Math.max(hL.pos.y, hR.pos.y);
+                    currentPreviewFrame = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+                }
+            } else {
+                if (creationState === 'DRAGGING' && currentPreviewFrame) createWindow(currentPreviewFrame);
+                creationState = 'IDLE';
+                currentPreviewFrame = null;
+            }
+        }
+
+        function createWindow(rect) {
+            const id = 'win-' + Date.now();
+            const div = document.createElement('div');
+            div.className = 'window-frame';
+            div.id = id;
+            div.style.left = rect.x + 'px';
+            div.style.top = rect.y + 'px';
+            div.style.width = rect.w + 'px';
+            div.style.height = rect.h + 'px';
+            
+            windowsContainer.appendChild(div);
+            frames.push({ ...rect, id: id });
+        }
+
+        function showMenu(pos) {
+            menuContainer.style.left = (pos.x - 30) + 'px';
+            menuContainer.style.top = (pos.y - 70) + 'px';
+            menuContainer.classList.add('visible');
+        }
+
+        function hideMenu() {
+            menuContainer.classList.remove('visible');
+            bubbles.google.classList.remove('active');
+            bubbles.youtube.classList.remove('active');
+        }
+
+        function updateMenuVisuals() {
+            bubbles.google.classList.toggle('active', menuSelection === 'google');
+            bubbles.youtube.classList.toggle('active', menuSelection === 'youtube');
+        }
+
+        function loadContent(frameId, type) {
+            const frame = document.getElementById(frameId);
+            if (!frame) return;
+            
+            if (type === 'youtube') {
+                const videoId = 'dQw4w9WgXcQ'; 
+                frame.innerHTML = `<iframe 
+                    src="https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1" 
+                    frameborder="0" 
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                    allowfullscreen></iframe>`;
+            } else {
+                const url = 'https://www.google.com/search?q=google&igu=1'; 
+                frame.innerHTML = `<iframe src="${url}"></iframe>`;
+            }
+            frame.style.pointerEvents = 'auto';
+        }
+
+        function simulateClick(x, y) {
+            const el = document.elementFromPoint(x, y);
+            if (!el) return;
+            const clickEvent = new MouseEvent('click', {
+                view: window, bubbles: true, cancelable: true, clientX: x, clientY: y
+            });
+            el.dispatchEvent(clickEvent);
+            
+            // Visual feedback
+            const marker = document.createElement('div');
+            marker.style.position = 'fixed';
+            marker.style.left = (x - 20) + 'px';
+            marker.style.top = (y - 20) + 'px';
+            marker.style.width = '40px';
+            marker.style.height = '40px';
+            marker.style.border = '2px solid white';
+            marker.style.borderRadius = '50%';
+            marker.style.pointerEvents = 'none';
+            marker.style.zIndex = '2000';
+            marker.style.transition = 'all 0.5s ease';
+            document.body.appendChild(marker);
+            setTimeout(() => {
+                marker.style.transform = 'scale(2)';
+                marker.style.opacity = '0';
+                setTimeout(() => marker.remove(), 500);
+            }, 0);
+        }
+
+        function deleteWindow(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            frames = frames.filter(f => f.id !== id);
+        }
+
+        function drawUI() {
+            if (creationSpark > 0) {
+                const s = 1.0 - creationSpark;
+                ctx.beginPath();
+                ctx.arc(startPinchPos.x, startPinchPos.y, s * 200, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(0, 242, 255, ${creationSpark})`;
+                ctx.lineWidth = 2 + creationSpark * 5;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(startPinchPos.x, startPinchPos.y, s * 50, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${creationSpark * 0.5})`;
+                ctx.fill();
+                creationSpark -= 0.05;
+            }
+
+            if (currentPreviewFrame) {
+                const { x, y, w, h } = currentPreviewFrame;
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = 'rgba(0, 242, 255, 0.6)';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.fillRect(x, y, w, h);
+                ctx.setLineDash([15, 5]);
+                ctx.strokeStyle = '#00f2ff';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+                ctx.setLineDash([]);
+                const cs = 30;
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#fff';
+                ctx.beginPath(); ctx.moveTo(x, y + cs); ctx.lineTo(x, y); ctx.lineTo(x + cs, y); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x + w - cs, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + cs); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, y + h - cs); ctx.lineTo(x, y + h); ctx.lineTo(x + cs, y + h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x + w - cs, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - cs); ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({ image: video });
+            },
+            width: 1280,
+            height: 720
+        });
+
+        camera.start().then(() => {
+            document.getElementById('loading').style.opacity = 0;
+            setTimeout(() => document.getElementById('loading').remove(), 1000);
+            resize();
+        });
+    </script>
+</body>
+</html>

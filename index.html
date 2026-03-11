@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4D Tesseract — Hand Controller</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000000;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Webcam visible as CSS background — object-fit: cover fills the screen */
+        #video-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 0;
+        }
+
+        /* Hidden video for mediapipe processing */
+        #video-hidden {
+            display: none;
+        }
+
+        /* mix-blend-mode: screen makes the canvas's black areas transparent,
+           so the webcam video shows through while bright particles stay visible */
+        #three-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            mix-blend-mode: screen;
+        }
+
+        #overlay-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .hud {
+            position: fixed;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 11px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #hud-tl {
+            top: 20px;
+            left: 20px;
+        }
+
+        #hud-br {
+            bottom: 20px;
+            right: 20px;
+            text-align: right;
+        }
+
+        .hud-label {
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 9px;
+            margin-bottom: 1px;
+        }
+
+        .hud-value {
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 13px;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 13px;
+            letter-spacing: 3px;
+            pointer-events: none;
+            z-index: 20;
+            transition: opacity 0.8s ease;
+        }
+
+        /* Floating hand stats */
+        #hand-stats {
+            position: fixed;
+            z-index: 15;
+            pointer-events: none;
+            font-family: 'Courier New', monospace;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 14px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            transition: opacity 0.3s ease;
+            opacity: 0;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+        }
+
+        #hand-stats .stat-row {
+            margin-bottom: 4px;
+        }
+
+        #hand-stats .stat-label {
+            color: rgba(255, 255, 255, 0.45);
+        }
+
+        #hand-stats .stat-value {
+            color: rgba(255, 255, 255, 0.95);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading">INITIALIZING TESSERACT...</div>
+
+    <!-- Webcam visible via CSS, behind the 3D canvas -->
+    <video id="video-bg" autoplay playsinline muted></video>
+
+    <canvas id="overlay-canvas"></canvas>
+
+    <!-- Floating stats near hand -->
+    <div id="hand-stats">
+        <div class="stat-row"><span class="stat-label">XW: </span><span class="stat-value" id="hs-xw">0.0°</span></div>
+        <div class="stat-row"><span class="stat-label">YW: </span><span class="stat-value" id="hs-yw">0.0°</span></div>
+        <div class="stat-row"><span class="stat-label">MODE: </span><span class="stat-value" id="hs-mode">IDLE</span>
+        </div>
+        <div class="stat-row"><span class="stat-label">SPEED: </span><span class="stat-value" id="hs-speed">1.0x</span>
+        </div>
+        <div class="stat-row"><span class="stat-label">SIZE: </span><span class="stat-value" id="hs-size">1.0x</span>
+        </div>
+    </div>
+
+    <div class="hud" id="hud-tl">
+        <div class="hud-label">Mode</div>
+        <div class="hud-value" id="mode-display">IDLE</div>
+    </div>
+    <div class="hud" id="hud-br">
+        <div class="hud-label">Particles</div>
+        <div class="hud-value" id="particle-count">—</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+        const videoBg = document.getElementById('video-bg');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const overlayCtx = overlayCanvas.getContext('2d');
+        const handStatsEl = document.getElementById('hand-stats');
+        const simplex = new SimplexNoise();
+
+        overlayCanvas.width = innerWidth;
+        overlayCanvas.height = innerHeight;
+
+        /**
+         * Maps MediaPipe normalized coords (0-1 in video frame) to screen pixels,
+         * accounting for object-fit: cover crop and scaleX(-1) mirror.
+         * @param {number} nx - Normalized x (0-1 in video)
+         * @param {number} ny - Normalized y (0-1 in video)
+         * @returns {{x: number, y: number}} Screen pixel coordinates
+         */
+        let videoMetrics = { displayW: 0, displayH: 0, offsetX: 0, offsetY: 0 };
+
+        /**
+         * Updates cached video-to-screen mapping metrics.
+         */
+        function updateVideoMetrics() {
+            const vw = videoBg.videoWidth || 1280;
+            const vh = videoBg.videoHeight || 720;
+            const vidAspect = vw / vh;
+            const winAspect = window.innerWidth / window.innerHeight;
+
+            if (winAspect > vidAspect) {
+                videoMetrics.displayW = window.innerWidth;
+                videoMetrics.displayH = window.innerWidth / vidAspect;
+                videoMetrics.offsetX = 0;
+                videoMetrics.offsetY = (window.innerHeight - videoMetrics.displayH) / 2;
+            } else {
+                videoMetrics.displayH = window.innerHeight;
+                videoMetrics.displayW = window.innerHeight * vidAspect;
+                videoMetrics.offsetX = (window.innerWidth - videoMetrics.displayW) / 2;
+                videoMetrics.offsetY = 0;
+            }
+        }
+
+        /**
+         * Maps MediaPipe normalized coords (0-1 in video frame) to screen pixels.
+         * Uses cached metrics for performance.
+         */
+        function videoToScreen(nx, ny) {
+            const sx = videoMetrics.offsetX + (1.0 - nx) * videoMetrics.displayW;
+            const sy = videoMetrics.offsetY + ny * videoMetrics.displayH;
+            return { x: sx, y: sy };
+        }
+
+        // --- 4D TESSERACT ---
+        function createVerts() {
+            const v = [];
+            for (let i = 0; i < 16; i++) v.push([(i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1, (i & 8) ? 1 : -1]);
+            return v;
+        }
+
+        function createEdges(v) {
+            const e = [];
+
+            for (let i = 0; i < 16; i++) for (let j = i + 1; j < 16; j++) {
+                let d = 0;
+                for (let k = 0; k < 4; k++) if (v[i][k] !== v[j][k]) d++;
+                if (d === 1) e.push([i, j]);
+            }
+
+            return e;
+        }
+
+        function rot4(p, pl, a) {
+            const c = Math.cos(a),
+                s = Math.sin(a);
+            let [x,
+                y,
+                z,
+                w] = p;
+
+            switch (pl) {
+                case 'xy': return [x * c - y * s, x * s + y * c, z, w];
+                case 'xz': return [x * c - z * s, y, x * s + z * c, w];
+                case 'xw': return [x * c - w * s, y, z, x * s + w * c];
+                case 'yz': return [x, y * c - z * s, y * s + z * c, w];
+                case 'yw': return [x, y * c - w * s, z, y * s + w * c];
+                case 'zw': return [x, y, z * c - w * s, z * s + w * c];
+            }
+        }
+
+        function proj(p, d) {
+            const s = d / (d - p[3]);
+            return [p[0] * s,
+            p[1] * s,
+            p[2] * s];
+        }
+
+        const verts4D = createVerts();
+        const edges = createEdges(verts4D);
+        const PPE = 150;
+        const SMOKE = 10000;
+        const TOTAL = 16 + edges.length * PPE + SMOKE;
+        document.getElementById('particle-count').textContent = TOTAL.toLocaleString();
+
+        // --- THREE.JS ---
+        // Three.js Globals
+        let ren, scene, cam, geo, mat, pts, fadeScene, fadeCam;
+
+        /**
+         * Initializes Three.js engine and objects with retry mechanism.
+         */
+        async function initThree() {
+            let retries = 5;
+            while (retries > 0 && typeof THREE === 'undefined') {
+                console.warn(`Three.js not found, retrying... (${retries} left)`);
+                await new Promise(r => setTimeout(r, 200));
+                retries--;
+            }
+
+            if (typeof THREE === 'undefined') {
+                throw new Error("Three.js library not loaded. Check CDN connection.");
+            }
+            ren = new THREE.WebGLRenderer({
+                antialias: false, preserveDrawingBuffer: true
+            });
+            ren.setSize(innerWidth, innerHeight);
+            ren.setPixelRatio(Math.min(devicePixelRatio, 2));
+            ren.autoClearColor = false;
+            ren.domElement.id = 'three-canvas';
+            document.body.appendChild(ren.domElement);
+
+            scene = new THREE.Scene();
+            cam = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
+            cam.position.set(0, 0, 7);
+
+            const positions = new Float32Array(TOTAL * 3);
+            const colors = new Float32Array(TOTAL * 3);
+            geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            mat = new THREE.PointsMaterial({
+                size: 0.08, map: createSprite(), vertexColors: true,
+                transparent: true, opacity: 0.65,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false, depthTest: false, sizeAttenuation: true
+            });
+            pts = new THREE.Points(geo, mat);
+            pts.position.x = -2.2;
+            scene.add(pts);
+
+            fadeScene = new THREE.Scene();
+            fadeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2),
+                new THREE.MeshBasicMaterial({
+                    color: 0x000000, transparent: true, opacity: 0.08, depthWrite: false, depthTest: false
+                })));
+        }
+
+        function createSprite() {
+            const s = 64,
+                c = document.createElement('canvas');
+            c.width = s;
+            c.height = s;
+            const x = c.getContext('2d');
+            const g = x.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+            g.addColorStop(0.0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.12, 'rgba(255,255,255,0.85)');
+            g.addColorStop(0.35, 'rgba(255,255,255,0.2)');
+            g.addColorStop(0.65, 'rgba(255,255,255,0.03)');
+            g.addColorStop(1.0, 'rgba(255,255,255,0)');
+            x.fillStyle = g;
+            x.fillRect(0, 0, s, s);
+            return new THREE.CanvasTexture(c);
+        }
+
+
+        // Smoke pre-gen
+        const smokeEdge = new Uint16Array(SMOKE);
+        const smokeT = new Float32Array(SMOKE);
+        const smokePhase = new Float32Array(SMOKE);
+        const smokeSpeed = new Float32Array(SMOKE);
+        const smokeDir = new Float32Array(SMOKE * 3);
+
+        for (let i = 0; i < SMOKE; i++) {
+            smokeEdge[i] = Math.floor(Math.random() * edges.length);
+            smokeT[i] = Math.random();
+            smokePhase[i] = Math.random() * 100;
+            smokeSpeed[i] = 0.3 + Math.random() * 0.7;
+            const th = Math.random() * Math.PI * 2;
+            const ph = Math.acos(2 * Math.random() - 1);
+            smokeDir[i * 3] = Math.sin(ph) * Math.cos(th);
+            smokeDir[i * 3 + 1] = Math.sin(ph) * Math.sin(th);
+            smokeDir[i * 3 + 2] = Math.cos(ph);
+        }
+
+        // --- HAND TRACKING ---
+        let handDetected = false;
+        let handLandmarks = null;
+        let rotXW = 0,
+            rotYW = 0,
+            rotXY = 0,
+            rotZW = 0;
+
+        // Gesture state
+        let thumbIndexPinch = false; // Thumb + index close = slow rotation
+        let threePinch = false;      // Thumb + index + middle = 1.0x speed
+
+        let currentScale = 1.0;
+        let targetScale = 1.0;
+        let smoothX = 0.5,
+            smoothY = 0.5;
+
+        /**
+         * Calculate distance between two landmarks.
+         * @param {Object} a - Landmark with x, y, z
+         * @param {Object} b - Landmark with x, y, z
+         * @returns {number} Euclidean distance
+         */
+        function dist(a, b) {
+            return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+        }
+
+        const PINCH_THRESHOLD = 0.06; // Normalized distance threshold for "pinching"
+
+        const hands = new Hands({
+            locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(r => {
+            if (r.multiHandLandmarks && r.multiHandLandmarks.length > 0) {
+                const lm = r.multiHandLandmarks[0];
+                handDetected = true;
+                handLandmarks = lm;
+
+                // Wrist position for manual control (smoothed)
+                const currentX = 1.0 - lm[0].x;
+                const currentY = lm[0].y;
+
+                smoothX += (currentX - smoothX) * 0.15;
+                smoothY += (currentY - smoothY) * 0.15;
+
+                // Gesture detection: thumb(4), index(8), middle(12) tips
+                const dThumbIndex = dist(lm[4], lm[8]);
+                const dThumbMiddle = dist(lm[4], lm[12]);
+
+                thumbIndexPinch = dThumbIndex < PINCH_THRESHOLD;
+                threePinch = thumbIndexPinch && dThumbMiddle < PINCH_THRESHOLD;
+            }
+
+            else {
+                handDetected = false;
+                handLandmarks = null;
+                thumbIndexPinch = false;
+                threePinch = false;
+            }
+        });
+
+        const mpCam = new Camera(videoBg, {
+            onFrame: async () => {
+                await hands.send({
+                    image: videoBg
+                });
+            }
+
+            ,
+            width: 1280, height: 720
+        });
+
+        try {
+            initThree().then(() => {
+                mpCam.start().then(() => {
+                    document.getElementById('loading').style.opacity = 0;
+                    updateVideoMetrics();
+                    if (ren) {
+                        ren.autoClearColor = true;
+                        ren.render(scene, cam);
+                        ren.autoClearColor = false;
+                    }
+                    loop();
+                });
+            });
+        } catch (e) {
+            console.error("Three.js initialization failure:", e);
+            alert("Initialization Failed: " + e.message);
+        }
+
+        window.addEventListener('resize', () => {
+            cam.aspect = innerWidth / innerHeight;
+            cam.updateProjectionMatrix();
+            ren.setSize(innerWidth, innerHeight);
+            overlayCanvas.width = innerWidth;
+            overlayCanvas.height = innerHeight;
+            updateVideoMetrics();
+        });
+
+        const modeEl = document.getElementById('mode-display');
+        let time = 0;
+
+        /**
+         * Draw finger tracking circles on thumb, index, middle fingertips.
+         * Position the floating stats panel near the palm.
+         */
+        function drawHandOverlay() {
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            if (!handLandmarks) {
+                handStatsEl.style.opacity = '0';
+                return;
+            }
+
+            // Only draw circles on thumb(4), index(8), middle(12)
+            const tracked = [4, 8, 12];
+
+            for (const idx of tracked) {
+                const lm = handLandmarks[idx];
+
+                const {
+                    x: sx, y: sy
+                }
+
+                    = videoToScreen(lm.x, lm.y);
+
+                // Outer ring
+                overlayCtx.beginPath();
+                overlayCtx.arc(sx, sy, 20, 0, Math.PI * 2);
+                overlayCtx.strokeStyle = 'rgba(255,255,255,0.75)';
+                overlayCtx.lineWidth = 1.5;
+                overlayCtx.stroke();
+
+                // Inner dot
+                overlayCtx.beginPath();
+                overlayCtx.arc(sx, sy, 3, 0, Math.PI * 2);
+                overlayCtx.fillStyle = 'rgba(255,255,255,0.95)';
+                overlayCtx.fill();
+            }
+
+            // Lines between thumb→index, index→middle
+            overlayCtx.beginPath();
+            overlayCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+            overlayCtx.lineWidth = 1;
+
+            for (let i = 0; i < tracked.length; i++) {
+                const {
+                    x, y
+                }
+
+                    = videoToScreen(handLandmarks[tracked[i]].x, handLandmarks[tracked[i]].y);
+                if (i === 0) overlayCtx.moveTo(x, y);
+                else overlayCtx.lineTo(x, y);
+            }
+
+            overlayCtx.stroke();
+
+            // Highlight pinch lines when active
+            if (thumbIndexPinch || threePinch) {
+                const t = videoToScreen(handLandmarks[4].x, handLandmarks[4].y);
+                const ix = videoToScreen(handLandmarks[8].x, handLandmarks[8].y);
+                overlayCtx.beginPath();
+                overlayCtx.moveTo(t.x, t.y);
+                overlayCtx.lineTo(ix.x, ix.y);
+
+                if (threePinch) {
+                    const mid = videoToScreen(handLandmarks[12].x, handLandmarks[12].y);
+                    overlayCtx.lineTo(mid.x, mid.y);
+                    overlayCtx.strokeStyle = 'rgba(255,100,255,0.8)';
+                } else {
+                    overlayCtx.strokeStyle = 'rgba(100,200,255,0.8)';
+                }
+
+                overlayCtx.lineWidth = 2;
+                overlayCtx.stroke();
+            }
+
+            // Position stats near the palm (landmark 9 = middle finger MCP)
+            const palm = handLandmarks[9];
+            const palmScreen = videoToScreen(palm.x, palm.y);
+            handStatsEl.style.opacity = '1';
+            handStatsEl.style.left = (palmScreen.x + 15) + 'px';
+            handStatsEl.style.top = (palmScreen.y + 40) + 'px';
+
+            const modeText = threePinch ? 'FAST' : (thumbIndexPinch ? 'SLOW' : 'MANUAL');
+            const speedText = threePinch ? '1.0x' : (thumbIndexPinch ? '0.1x' : '0.5x');
+            document.getElementById('hs-xw').textContent = ((rotXW * 180 / Math.PI) % 360).toFixed(1) + '°';
+            document.getElementById('hs-yw').textContent = ((rotYW * 180 / Math.PI) % 360).toFixed(1) + '°';
+            document.getElementById('hs-mode').textContent = modeText;
+            document.getElementById('hs-speed').textContent = speedText;
+            document.getElementById('hs-size').textContent = currentScale.toFixed(2) + 'x';
+        }
+
+        function loop() {
+            requestAnimationFrame(loop);
+            time += 0.016;
+
+            // --- ROTATION CONTROL ---
+            let modeText = 'INFINITE FOLD';
+
+            if (handDetected) {
+                if (threePinch || thumbIndexPinch) {
+                    // Pinch active: scale based on vertical position
+                    // Map smoothY (0 top to 1 bottom) to a scale range (2.5x to 0.3x)
+                    targetScale = 0.3 + (1.0 - smoothY) * 2.2;
+
+                    if (threePinch) {
+                        // 3-finger pinch: FAST rotation (1.0x base speed)
+                        rotXW += 0.023;
+                        rotYW += 0.017;
+                        rotXY += 0.011;
+                        rotZW += 0.008;
+                        modeText = 'FAST ROTATE';
+                    } else {
+                        // Thumb+index pinch: SLOW rotation (0.1x of infinite fold)
+                        rotXW += 0.0023;
+                        rotYW += 0.0017;
+                        rotXY += 0.0011;
+                        rotZW += 0.0008;
+                        modeText = 'SLOW ROTATE';
+                    }
+                }
+                else {
+                    // Open hand: absolute position control
+                    targetScale = 1.0;
+                    const tXW = (smoothX - 0.5) * Math.PI * 2;
+                    const tYW = (smoothY - 0.5) * Math.PI * 2;
+                    rotXW += (tXW - rotXW) * 0.04;
+                    rotYW += (tYW - rotYW) * 0.04;
+                    rotXY += 0.003;
+                    modeText = 'MANUAL CONTROL';
+                }
+            }
+
+            else {
+                // No hand: continuous fold (0.5x speed)
+                targetScale = 1.0;
+                rotXW += 0.0115; // 0.023 * 0.5
+                rotYW += 0.0085; // 0.017 * 0.5
+                rotXY += 0.0055; // 0.011 * 0.5
+                rotZW += 0.0040; // 0.008 * 0.5
+            }
+
+            // Apply scaling smoothing
+            currentScale += (targetScale - currentScale) * 0.15;
+            pts.scale.set(currentScale, currentScale, currentScale);
+
+            modeEl.textContent = modeText;
+
+            // --- PROJECT ---
+            const proj3D = [];
+            const D = 3.0;
+
+            for (let i = 0; i < 16; i++) {
+                let v = [...verts4D[i]];
+                v = rot4(v, 'xw', rotXW);
+                v = rot4(v, 'yw', rotYW);
+                v = rot4(v, 'xy', rotXY);
+                v = rot4(v, 'zw', rotZW);
+                proj3D.push(proj(v, D));
+            }
+
+            const pA = geo.attributes.position;
+            const cA = geo.attributes.color;
+            let idx = 0;
+
+            for (let i = 0; i < 16; i++) {
+                pA.setXYZ(idx, proj3D[i][0], proj3D[i][1], proj3D[i][2]);
+                cA.setXYZ(idx, 1, 1, 1);
+                idx++;
+            }
+
+            for (let e = 0; e < edges.length; e++) {
+                const [a, b] = edges[e];
+                const [x1, y1, z1] = proj3D[a];
+                const [x2, y2, z2] = proj3D[b];
+
+                for (let t = 0; t < PPE; t++) {
+                    const f = (t + 1) / (PPE + 1);
+                    pA.setXYZ(idx, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f, z1 + (z2 - z1) * f);
+                    const br = 0.3 + 0.2 * Math.sin(f * Math.PI);
+                    cA.setXYZ(idx, br, br, br);
+                    idx++;
+                }
+            }
+
+            const smokeTime = time * 0.5;
+
+            for (let i = 0; i < SMOKE; i++) {
+                const eIdx = smokeEdge[i];
+                const [a, b] = edges[eIdx];
+                const [x1, y1, z1] = proj3D[a];
+                const [x2, y2, z2] = proj3D[b];
+                const t = smokeT[i];
+                const bx = x1 + (x2 - x1) * t;
+                const by = y1 + (y2 - y1) * t;
+                const bz = z1 + (z2 - z1) * t;
+                const phase = smokePhase[i];
+                const breathe = Math.sin(smokeTime * smokeSpeed[i] + phase) * 0.5 + 0.5;
+                const d = breathe * 0.6;
+                const nx = simplex.noise2D(phase, smokeTime * 0.3) * 0.1;
+                const ny = simplex.noise2D(phase + 50, smokeTime * 0.3) * 0.1;
+                pA.setXYZ(idx, bx + smokeDir[i * 3] * d + nx, by + smokeDir[i * 3 + 1] * d + ny, bz + smokeDir[i * 3 + 2] * d);
+                const br = (1.0 - breathe) * 0.12;
+                cA.setXYZ(idx, br, br, br);
+                idx++;
+            }
+
+            pA.needsUpdate = true;
+            cA.needsUpdate = true;
+
+            if (ren) {
+                ren.render(fadeScene, fadeCam);
+                ren.render(scene, cam);
+            }
+            drawHandOverlay();
+        }
+
+    </script>
+</body>
+
+</html>

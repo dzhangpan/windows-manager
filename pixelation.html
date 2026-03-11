@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixelation ASCII Effect</title>
+    <style>
+        :root {
+            --bg-color: #050505;
+            --accent-color: #00ff88;
+            --panel-bg: rgba(20, 20, 20, 0.8);
+            --text-color: #e0e0e0;
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            color: var(--text-color);
+        }
+
+        #mainCanvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            image-rendering: pixelated;
+        }
+
+        #videoElement {
+            display: none;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            padding: 20px 30px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            transition: opacity 0.3s ease;
+        }
+
+        .controls:hover {
+            opacity: 1;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.6;
+        }
+
+        input[type="range"] {
+            appearance: none;
+            background: rgba(255, 255, 255, 0.1);
+            height: 4px;
+            border-radius: 2px;
+            width: 120px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: var(--accent-color);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent-color);
+        }
+
+        .header {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            pointer-events: none;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .status {
+            font-size: 12px;
+            opacity: 0.5;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 5px;
+        }
+
+        .status::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background: var(--accent-color);
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 0.5;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.5;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>Pixelation ASCII</h1>
+        <div class="status">Live Session</div>
+    </div>
+
+    <video id="videoElement" autoplay playsinline></video>
+    <canvas id="mainCanvas"></canvas>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="density">Density</label>
+            <input type="range" id="density" min="4" max="20" value="8">
+        </div>
+        <div class="control-group">
+            <label for="brightness">Brightness</label>
+            <input type="range" id="brightness" min="0.5" max="2" step="0.1" value="1">
+        </div>
+    </div>
+
+    <script>
+        /**
+         * @file pixelation.html
+         * @description Webcam-to-ASCII pixelation effect.
+         */
+
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+
+        // Offscreen canvas for downsampling
+        const offscreenCanvas = document.createElement('canvas');
+        const octx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
+        const densityInput = document.getElementById('density');
+        const brightnessInput = document.getElementById('brightness');
+
+        // ASCII character set from the reference image style
+        // Brightest to darkest
+        const chars = ['0', '=', '+', '*', ' ', '/', '\\', '.', ' '];
+
+        /**
+         * Initializes the webcam stream.
+         * @async
+         * @returns {Promise<void>}
+         */
+        async function initWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: "user"
+                    }
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    resize();
+                    render();
+                };
+            } catch (err) {
+                console.error("Webcam access denied:", err);
+                alert("Please allow webcam access for the effect to work.");
+            }
+        }
+
+        /**
+         * Resizes the canvas to match the window.
+         */
+        function resize() {
+            canvas.width = window.innerWidth * window.devicePixelRatio;
+            canvas.height = window.innerHeight * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+
+        window.addEventListener('resize', resize);
+
+        /**
+         * Updates the offscreen canvas dimensions based on density.
+         */
+        function updateOffscreenSize() {
+            const density = parseInt(densityInput.value);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            offscreenCanvas.width = Math.floor(w / density);
+            offscreenCanvas.height = Math.floor(h / density);
+        }
+
+        densityInput.oninput = updateOffscreenSize;
+        window.addEventListener('resize', () => {
+            resize();
+            updateOffscreenSize();
+        });
+
+        /**
+         * Main rendering loop.
+         */
+        function render() {
+            const density = parseInt(densityInput.value);
+            const brightness = parseFloat(brightnessInput.value);
+
+            const cols = offscreenCanvas.width;
+            const rows = offscreenCanvas.height;
+
+            // Draw video to offscreen canvas
+            octx.drawImage(video, 0, 0, cols, rows);
+
+            // Get pixel data
+            const imageData = octx.getImageData(0, 0, cols, rows);
+            const pixels = imageData.data;
+
+            // Clear main canvas
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, 0, w, h);
+
+            ctx.font = `${density}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const i = (y * cols + x) * 4;
+                    const r = pixels[i] * brightness;
+                    const g = pixels[i + 1] * brightness;
+                    const b = pixels[i + 2] * brightness;
+
+                    const avg = (r + g + b) / 3;
+
+                    // Map average brightness to ASCII char
+                    // Reference used: / \ . + * = 0
+                    // Order by weight (visual density)
+                    const weightMap = [' ', '.', '\\', '/', '+', '*', '=', '0'];
+                    const charIndex = Math.floor((avg / 255) * (weightMap.length - 1));
+                    const char = weightMap[charIndex] || ' ';
+
+                    // Draw subtle background block for "pixel" feel
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.15)`;
+                    ctx.fillRect(x * density, y * density, density, density);
+
+                    // Draw the ASCII character with full color
+                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                    ctx.fillText(char, x * density + density / 2, y * density + density / 2);
+                }
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        initWebcam();
+    </script>
+</body>
+
+</html>
