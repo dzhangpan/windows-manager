@@ -21,6 +21,9 @@ dist/
 tmp/
 .temp/
 
-# Private/Config
-.env
-.gemini/
+# Other Experiments (Excluded from Windows Manager repo)
+accordion.html
+index.html
+interactive_geometry.html
+neural_core.html
+pixelation.html
