@@ -704,9 +704,13 @@
          * @param {Object} hands Combined hand data
          */
         function processGestures(hands) {
+            // CRITICAL: Double-hand (creation) must run FIRST so creationState
+            // is set before single-hand handlers call handleExtraction.
+            // Otherwise extraction sees creationState === 'IDLE' on the first
+            // frame of a two-hand pinch and immediately starts pulling the file.
+            handleDoubleHandGestures(hands.left, hands.right);
             handleRightHand(hands.right);
             handleLeftHand(hands.left);
-            handleDoubleHandGestures(hands.left, hands.right);
         }
 
         /**
