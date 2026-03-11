@@ -548,9 +548,7 @@
                     // Simplify: Just use the counters for stability
                     // Apply release hysteresis for "stickiness"
                     const pinchStable = (gestureState[side].pinch >= GESTURE_THRESHOLD) || 
-                                        (gestureState[side].pinch > 0 && (side === 'left' ? wasIndexPinching : wasIndexPinching)); 
-                                        // Wait, wasIndexPinching is only for right hand.
-                                        // Let's use the counters directly for simple logic.
+                                        (gestureState[side].pinch > 0 && wasIndexPinching); 
                     const mPinchStable = gestureState[side].middlePinch >= GESTURE_THRESHOLD;
                     const openStable = gestureState[side].open >= GESTURE_THRESHOLD;
                     const fistStable = gestureState[side].fist >= GESTURE_THRESHOLD;
@@ -591,8 +589,12 @@
                         isOpen: openStable,
                         isFist: fistStable,
                         isManipulationMode: isManipulationActive,
-                        lm: lm 
                     };
+
+                    let progress = 0;
+                    if (side === 'left' && fistStable) {
+                        progress = holdTimerL / HOLD_CLOSE;
+                    }
 
                     drawHandMarker(handData[side], isRight, progress);
                 });
