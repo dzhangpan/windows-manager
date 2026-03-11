@@ -814,10 +814,12 @@
                 deleteHoldStart = Date.now();
             } else {
                 const progress = Math.min((Date.now() - deleteHoldStart) / DELETE_HOLD_DURATION, 1);
+                bubbles.right.classList.add('progressing');
                 updateProgressRing(progress);
                 if (progress >= 1) {
                     deleteWindow(activeMenuFrameId);
                     hideMenu();
+                    bubbles.right.classList.remove('progressing');
                     menuState = 'CLOSED';
                     menuSelection = null;
                     isHoldingDelete = false;
@@ -844,10 +846,10 @@
         }
 
         function resetProgressRing() {
+            bubbles.right.classList.remove('progressing');
             const ring = bubbles.right.querySelector('.progress-ring');
             if (ring) {
-                ring.style.background = 'transparent';
-                ring.style.clipPath = 'none';
+                ring.style.background = 'conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)';
             }
         }
 
@@ -1023,29 +1025,15 @@
             bubbles.right.classList.toggle('active', menuSelection === 'right');
         }
         
+        /**
+         * @description Updates the circular progress ring for safe delete.
+         * @param {number} p Progress 0-1
+         */
         function updateProgressRing(p) {
-            // p goes from 0 to 1
-            let path = '';
-            if (p <= 0.125) {
-                const x = 50 + 50 * Math.tan(p * Math.PI * 4);
-                path = `polygon(50% 50%, 50% 0, ${x}% 0, ${x}% 0, ${x}% 0, ${x}% 0)`;
-            } else if (p <= 0.375) {
-                const y = 50 + 50 * Math.tan((p - 0.25) * Math.PI * 4);
-                path = `polygon(50% 50%, 50% 0, 100% 0, 100% ${y}%, 100% ${y}%, 100% ${y}%)`;
-            } else if (p <= 0.625) {
-                const x = 50 - 50 * Math.tan((p - 0.5) * Math.PI * 4);
-                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, ${x}% 100%, ${x}% 100%)`;
-            } else if (p <= 0.875) {
-                const y = 50 - 50 * Math.tan((p - 0.75) * Math.PI * 4);
-                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 ${y}%)`;
-            } else {
-                const x = 50 + 50 * Math.tan((p - 1) * Math.PI * 4);
-                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x}% 0)`;
-            }
             const ring = bubbles.right.querySelector('.progress-ring');
             if (ring) {
-                ring.style.background = `rgba(255, 59, 48, 0.8)`;
-                ring.style.clipPath = path;
+                const deg = p * 360;
+                ring.style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${deg}deg, transparent 0deg)`;
             }
         }
 
