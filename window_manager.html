@@ -60,15 +60,22 @@
             z-index: 5;
         }
 
+        /* Window Frame Styles */
         .window-frame {
             position: absolute;
-            background: var(--glass);
-            backdrop-filter: blur(15px);
-            border: 1px solid var(--glass-border);
+            border: 2px solid rgba(0, 242, 255, 0.4);
+            background: rgba(0, 20, 40, 0.6);
+            backdrop-filter: blur(10px);
             border-radius: 12px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-            overflow: visible;
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+            box-shadow: 0 0 20px rgba(0, 242, 255, 0.2);
+            overflow: hidden;
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+            transform-origin: top left;
+        }
+
+        .window-frame.minimized {
+            border-radius: 50%;
+            pointer-events: none; /* Handled by dock click/pinch */
         }
 
         .window-frame.active {
@@ -121,15 +128,97 @@
             justify-content: center;
             align-items: center;
             font-size: 24px;
-            transition: all 0.3s ease;
+            transition: all 0.3s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
             position: relative;
         }
 
+        #bubble-google { transform: translateY(-40px); }
+        #bubble-youtube { transform: translateY(40px); }
+        #bubble-minimize { transform: translateX(-40px); }
+        #bubble-close { transform: translateX(40px); border-color: #ff3b30; color: #ff3b30; }
+
         .bubble.active {
-            transform: scale(1.2);
-            background: rgba(255, 255, 255, 0.2);
-            border-color: var(--neon-blue);
-            box-shadow: 0 0 15px var(--neon-blue);
+            background: rgba(0, 242, 255, 0.8);
+            color: #000;
+            box-shadow: 0 0 20px rgba(0, 242, 255, 0.8);
+        }
+
+        #bubble-close.active {
+            background: rgba(255, 59, 48, 0.8);
+            color: #fff;
+            box-shadow: 0 0 20px rgba(255, 59, 48, 0.8);
+        }
+
+        /* Progress ring for Safe Delete */
+        .progress-ring {
+            position: absolute;
+            top: -4px;
+            left: -4px;
+            width: 68px; /* bubble width(60) + border(4*2) */
+            height: 68px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        #bubble-close .progress-ring {
+            border-color: #ff3b30;
+            clip-path: polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0);
+        }
+
+        .bubble.progressing .progress-ring {
+            opacity: 1;
+        }
+
+        /* Minimize Dock */
+        #minimize-dock {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            height: 60px;
+            background: rgba(0, 20, 40, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 242, 255, 0.3);
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 10px;
+            gap: 15px;
+            z-index: 900;
+            transition: opacity 0.3s;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #minimize-dock.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .dock-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(0, 242, 255, 0.2);
+            border: 2px solid rgba(0, 242, 255, 0.8);
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--neon-blue);
+            font-family: monospace;
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .dock-icon:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.8);
         }
 
         .bubble::after {
@@ -234,6 +323,18 @@
         TRACKING STATUS INITIALIZING...
     </div>
 
+    <div id="menu-container" class="bubble-menu">
+        <div class="bubble" data-label="Google" id="bubble-google">G</div>
+        <div class="bubble" data-label="YouTube" id="bubble-youtube">Y</div>
+        <div class="bubble" data-label="Minimize" id="bubble-minimize">-</div>
+        <div class="bubble" data-label="Close" id="bubble-close">
+            X
+            <div class="progress-ring"></div>
+        </div>
+    </div>
+
+    <div id="minimize-dock"></div>
+
     <div class="security-note">
         NOTE: INTERACTION WITH EXTERNAL SITES REQUIRES CHROME FLAG --DISABLE-WEB-SECURITY.
     </div>
@@ -241,7 +342,14 @@
     <div id="menu-container" class="bubble-menu">
         <div class="bubble" data-label="Google" id="bubble-google">G</div>
         <div class="bubble" data-label="YouTube" id="bubble-youtube">Y</div>
+        <div class="bubble" data-label="Minimize" id="bubble-minimize">-</div>
+        <div class="bubble" data-label="Close" id="bubble-close">
+            X
+            <div class="progress-ring"></div>
+        </div>
     </div>
+
+    <div id="minimize-dock"></div>
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -261,8 +369,11 @@
         const virtualCursor = document.getElementById('virtual-cursor');
         const bubbles = {
             google: document.getElementById('bubble-google'),
-            youtube: document.getElementById('bubble-youtube')
+            youtube: document.getElementById('bubble-youtube'),
+            minimize: document.getElementById('bubble-minimize'),
+            close: document.getElementById('bubble-close')
         };
+        const minimizeDock = document.getElementById('minimize-dock');
 
         let width, height;
         let vMetrics = { dw: 0, dh: 0, ox: 0, oy: 0 };
@@ -588,18 +699,64 @@
                 }
                 if (hR.middlePinching && menuState === 'OPEN') {
                     // While holding middle pinch — navigate selection
+                    const dx = hR.pos.x - menuStartPos.x;
                     const dy = hR.pos.y - menuStartPos.y;
-                    if (dy < -40) menuSelection = 'google';
-                    else if (dy > 40) menuSelection = 'youtube';
-                    else menuSelection = null;
-                    updateMenuVisuals();
+                    
+                    let newSelection = null;
+                    if (Math.abs(dy) > Math.abs(dx)) {
+                        // Vertical movement
+                        if (dy < -40) newSelection = 'google';
+                        else if (dy > 40) newSelection = 'youtube';
+                    } else {
+                        // Horizontal movement
+                        if (dx < -40) newSelection = 'minimize';
+                        else if (dx > 40) newSelection = 'close';
+                    }
+
+                    if (newSelection !== menuSelection) {
+                        menuSelection = newSelection;
+                        updateMenuVisuals();
+                        
+                        // Reset delete hold if we changed selection
+                        isHoldingDelete = false;
+                        bubbles.close.classList.remove('progressing');
+                        bubbles.close.querySelector('.progress-ring').style.clipPath = 'polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0)';
+                    }
+                    
+                    // Handle 1-second hold for Delete
+                    if (menuSelection === 'close') {
+                        if (!isHoldingDelete) {
+                            isHoldingDelete = true;
+                            deleteHoldStart = Date.now();
+                            bubbles.close.classList.add('progressing');
+                        } else {
+                            const holdTime = Date.now() - deleteHoldStart;
+                            const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
+                            updateProgressRing(progress);
+                            
+                            if (progress >= 1) {
+                                deleteWindow(activeMenuFrameId);
+                                hideMenu();
+                                menuState = 'CLOSED';
+                                menuSelection = null;
+                                isHoldingDelete = false;
+                            }
+                        }
+                    }
                 }
                 if (!hR.middlePinching && wasMiddlePinching && menuState === 'OPEN') {
                     // Middle pinch released — confirm selection
-                    if (menuSelection) loadContent(activeMenuFrameId, menuSelection);
+                    if (menuSelection === 'google' || menuSelection === 'youtube') {
+                        loadContent(activeMenuFrameId, menuSelection);
+                    } else if (menuSelection === 'minimize') {
+                        minimizeWindow(activeMenuFrameId);
+                    }
+                    // If it was 'close', it requires the 1s hold, so releasing early does nothing but close the menu.
+                    
                     hideMenu();
                     menuState = 'CLOSED';
                     menuSelection = null;
+                    isHoldingDelete = false;
                 }
                 wasMiddlePinching = hR.middlePinching;
 
@@ -614,20 +771,14 @@
                 }
             }
 
-            // --- LEFT HAND: MOVE, RESIZE, CLOSE ---
+            // --- LEFT HAND: MOVE, RESIZE ---
             if (hL && creationState === 'IDLE' && menuState === 'CLOSED') {
                 const hitFrame = (movingFrameId || resizingFrameId) 
                     ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
                     : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
                 
                 if (hitFrame) {
-                    if (hL.isFist) {
-                        holdTimerL++;
-                        if (holdTimerL > HOLD_CLOSE) {
-                            deleteWindow(hitFrame.id);
-                            holdTimerL = 0;
-                        }
-                    } else if (hL.pinching) {
+                    if (hL.pinching) {
                         // THUMB + INDEX = MOVE
                         if (!movingFrameId && !resizingFrameId) {
                             movingFrameId = hitFrame.id;
@@ -739,6 +890,96 @@
         function updateMenuVisuals() {
             bubbles.google.classList.toggle('active', menuSelection === 'google');
             bubbles.youtube.classList.toggle('active', menuSelection === 'youtube');
+            bubbles.minimize.classList.toggle('active', menuSelection === 'minimize');
+            bubbles.close.classList.toggle('active', menuSelection === 'close');
+        }
+        
+        function updateProgressRing(p) {
+            // p goes from 0 to 1
+            let path = '';
+            if (p <= 0.125) {
+                const x = 50 + 50 * Math.tan(p * Math.PI * 4);
+                path = `polygon(50% 50%, 50% 0, ${x}% 0, ${x}% 0, ${x}% 0, ${x}% 0)`;
+            } else if (p <= 0.375) {
+                const y = 50 + 50 * Math.tan((p - 0.25) * Math.PI * 4);
+                path = `polygon(50% 50%, 50% 0, 100% 0, 100% ${y}%, 100% ${y}%, 100% ${y}%)`;
+            } else if (p <= 0.625) {
+                const x = 50 - 50 * Math.tan((p - 0.5) * Math.PI * 4);
+                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, ${x}% 100%, ${x}% 100%)`;
+            } else if (p <= 0.875) {
+                const y = 50 - 50 * Math.tan((p - 0.75) * Math.PI * 4);
+                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 ${y}%)`;
+            } else {
+                const x = 50 + 50 * Math.tan((p - 1) * Math.PI * 4);
+                path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x}% 0)`;
+            }
+            bubbles.close.querySelector('.progress-ring').style.clipPath = path;
+        }
+
+        function minimizeWindow(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            
+            // Mark as minimized
+            const frame = frames.find(f => f.id === id);
+            if (frame) frame.isMinimized = true;
+            
+            if (!minimizedFrames.includes(id)) {
+                minimizedFrames.push(id);
+            }
+            
+            // Visual transition: scale down and move to bottom center (dock area)
+            const dockRect = minimizeDock.getBoundingClientRect();
+            // We can't know the exact position in the flexbox easily, so we just scale it down to a point 
+            // and let the CSS transition handle it. Actually, adding a class is better.
+            el.classList.add('minimized');
+            // Move it offscreen or to dock approximate
+            el.style.transform = `scale(0.1) translate(${window.innerWidth/2 - frame.x}px, ${window.innerHeight - frame.y}px)`;
+            el.style.opacity = '0';
+            
+            setTimeout(() => {
+                el.style.display = 'none';
+                updateDock();
+            }, 300); // match transition
+        }
+
+        function restoreWindow(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            
+            const frame = frames.find(f => f.id === id);
+            if (frame) frame.isMinimized = false;
+            
+            minimizedFrames = minimizedFrames.filter(mfId => mfId !== id);
+            updateDock();
+            
+            el.style.display = 'block';
+            // Force reflow
+            void el.offsetWidth;
+            
+            el.classList.remove('minimized');
+            el.style.transform = `scale(1) translate(0px, 0px)`;
+            el.style.opacity = '1';
+        }
+
+        function updateDock() {
+            minimizeDock.innerHTML = '';
+            if (minimizedFrames.length > 0) {
+                minimizeDock.classList.add('visible');
+                minimizedFrames.forEach(id => {
+                    const icon = document.createElement('div');
+                    icon.className = 'dock-icon';
+                    icon.id = `dock-icon-${id}`;
+                    icon.innerText = id.split('-')[1].slice(-3); // Just show last 3 digits of timestamp as ID
+                    
+                    // Allow mouse click for testing
+                    icon.onclick = () => restoreWindow(id);
+                    
+                    minimizeDock.appendChild(icon);
+                });
+            } else {
+                minimizeDock.classList.remove('visible');
+            }
         }
 
         function loadContent(frameId, type) {
