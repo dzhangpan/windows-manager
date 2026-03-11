@@ -83,6 +83,27 @@
             background: #000;
         }
 
+        /* Apple-style resize grab bar */
+        .resize-bar {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 40px;
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.5);
+            cursor: nwse-resize;
+            z-index: 10;
+            transition: background 0.2s ease, width 0.2s ease;
+        }
+
+        .window-frame:hover .resize-bar,
+        .window-frame.resizing .resize-bar {
+            background: rgba(255, 255, 255, 0.9);
+            width: 50px;
+        }
+
         /* Floating Menu Bubbles */
         .bubble-menu {
             position: fixed;
@@ -218,7 +239,7 @@
 
     <div id="gesture-hud" class="hud-hint">
         PINCH BOTH HANDS TO CREATE FRAME<br>
-        LEFT FIST (5s) TO CLOSE | LEFT PINCH (2s) TO MOVE<br>
+        LEFT FIST (5s) TO CLOSE | LEFT PINCH TO MOVE / RESIZE<br>
         RIGHT THUMB+INDEX = TAP | RIGHT THUMB+MIDDLE = MENU
     </div>
 
@@ -299,10 +320,10 @@
 
         let holdTimerL = 0; 
         let movingFrameId = null;
+        let resizingFrameId = null;
         let moveOffset = { x: 0, y: 0 };
 
         const TICK_RATE = 30;
-        const HOLD_MOVE = 2 * TICK_RATE; 
         const HOLD_CLOSE = 5 * TICK_RATE;
 
         /** @description Edge detection for instant tap (fires on release) */
@@ -399,8 +420,7 @@
 
                     let progress = 0;
                     if (side === 'left') {
-                        if (isPinching) progress = holdTimerL / HOLD_MOVE;
-                        else if (ist) progress = holdTimerL / HOLD_CLOSE;
+                        if (ist) progress = holdTimerL / HOLD_CLOSE;
                     }
                     // No progress ring needed for right hand — both actions are instant
 
@@ -504,9 +524,11 @@
                 }
             }
 
-            // --- LEFT HAND: MOVE, CLOSE ---
+            // --- LEFT HAND: MOVE, RESIZE, CLOSE ---
             if (hL && creationState === 'IDLE' && menuState === 'CLOSED') {
-                const hitFrame = movingFrameId ? frames.find(f => f.id === movingFrameId) : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
+                const hitFrame = (movingFrameId || resizingFrameId) 
+                    ? frames.find(f => f.id === (movingFrameId || resizingFrameId)) 
+                    : frames.find(f => hL.pos.x > f.x && hL.pos.x < f.x + f.w && hL.pos.y > f.y && hL.pos.y < f.y + f.h);
                 if (hitFrame) {
                     if (hL.isFist) {
                         holdTimerL++;
@@ -515,15 +537,20 @@
                             holdTimerL = 0;
                         }
                     } else if (hL.pinching) {
-                        if (!movingFrameId) {
-                            holdTimerL++;
-                            if (holdTimerL > HOLD_MOVE) {
+                        if (!movingFrameId && !resizingFrameId) {
+                            // Determine if pinch is near the resize bar (bottom 40px of frame)
+                            const nearBottom = hL.pos.y > (hitFrame.y + hitFrame.h - 40);
+                            if (nearBottom) {
+                                resizingFrameId = hitFrame.id;
+                                moveOffset = { x: hL.pos.x, y: hL.pos.y };
+                                const el = document.getElementById(hitFrame.id);
+                                if (el) el.classList.add('resizing');
+                            } else {
                                 movingFrameId = hitFrame.id;
                                 moveOffset = { x: hitFrame.x - hL.pos.x, y: hitFrame.y - hL.pos.y };
-                                holdTimerL = 0;
                             }
-                        } else {
-                            // Currently moving
+                        } else if (movingFrameId) {
+                            // Moving
                             hitFrame.x = hL.pos.x + moveOffset.x;
                             hitFrame.y = hL.pos.y + moveOffset.y;
                             const el = document.getElementById(hitFrame.id);
@@ -531,18 +558,43 @@
                                 el.style.left = hitFrame.x + 'px';
                                 el.style.top = hitFrame.y + 'px';
                             }
+                        } else if (resizingFrameId) {
+                            // Resizing
+                            const dx = hL.pos.x - moveOffset.x;
+                            const dy = hL.pos.y - moveOffset.y;
+                            const newW = Math.max(200, hitFrame.w + dx);
+                            const newH = Math.max(150, hitFrame.h + dy);
+                            hitFrame.w = newW;
+                            hitFrame.h = newH;
+                            moveOffset = { x: hL.pos.x, y: hL.pos.y };
+                            const el = document.getElementById(hitFrame.id);
+                            if (el) {
+                                el.style.width = newW + 'px';
+                                el.style.height = newH + 'px';
+                            }
                         }
                     } else {
                         holdTimerL = 0;
+                        if (resizingFrameId) {
+                            const el = document.getElementById(resizingFrameId);
+                            if (el) el.classList.remove('resizing');
+                        }
                         movingFrameId = null;
+                        resizingFrameId = null;
                     }
                 } else {
                     holdTimerL = 0;
                     movingFrameId = null;
+                    resizingFrameId = null;
                 }
             } else {
                 holdTimerL = 0;
+                if (resizingFrameId) {
+                    const el = document.getElementById(resizingFrameId);
+                    if (el) el.classList.remove('resizing');
+                }
                 movingFrameId = null;
+                resizingFrameId = null;
             }
 
             // --- BOTH HANDS: CREATION ---
@@ -578,6 +630,11 @@
             div.style.top = rect.y + 'px';
             div.style.width = rect.w + 'px';
             div.style.height = rect.h + 'px';
+
+            // Apple-style resize grab bar
+            const bar = document.createElement('div');
+            bar.className = 'resize-bar';
+            div.appendChild(bar);
             
             windowsContainer.appendChild(div);
             frames.push({ ...rect, id: id });
