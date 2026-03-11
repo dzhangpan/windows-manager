@@ -762,6 +762,7 @@
                             updateMenuLabels();
                             updateMenuVisuals();
                             showMenu(hR.pos); // Snaps the UI to the current hand position
+                            isHoldingDelete = false; // Reset delete if transitioning
                         }
                     }
 
@@ -777,8 +778,11 @@
                             
                             // Reset delete hold if we changed selection
                             isHoldingDelete = false;
-                            bubbles.right.classList.remove('progressing');
-                            bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) 0deg, transparent 0deg)`;
+                            const ring = bubbles.right.querySelector('.progress-ring');
+                            if (ring) {
+                                ring.style.background = 'transparent';
+                                ring.style.clipPath = 'polygon(50% 50%, 50% 0, 50% 0, 50% 0, 50% 0, 50% 0)';
+                            }
                         }
                         
                         // Handle 1-second hold for Delete (only in ROOT menu on Right selection)
@@ -786,11 +790,10 @@
                             if (!isHoldingDelete) {
                                 isHoldingDelete = true;
                                 deleteHoldStart = Date.now();
-                                bubbles.right.classList.add('progressing');
                             } else {
                                 const holdTime = Date.now() - deleteHoldStart;
                                 const progress = Math.min(holdTime / DELETE_HOLD_DURATION, 1);
-                                bubbles.right.querySelector('.progress-ring').style.background = `conic-gradient(rgba(255, 59, 48, 0.8) ${progress * 360}deg, transparent 0deg)`;
+                                updateProgressRing(progress);
                                 
                                 if (progress >= 1) {
                                     deleteWindow(activeMenuFrameId);
@@ -804,21 +807,20 @@
                     }
                 }
                 if (!hR.middlePinching && wasMiddlePinching && menuState !== 'CLOSED') {
-                    // Middle pinch released — execute action if hovering over a valid endpoint
-                    if (menuSelection) {
+                    // Middle pinch released — Execute Selection
+                    if (menuSelection && !(menuState === 'ROOT' && menuSelection === 'right')) {
                         if (menuState === 'ROOT') {
-                            if (menuSelection === 'left') { minimizeWindow(activeMenuFrameId); }
+                            if (menuSelection === 'left') minimizeWindow(activeMenuFrameId);
                         } else if (menuState === 'APPS') {
-                            if (menuSelection === 'bottom') { loadContent(activeMenuFrameId, 'instagram'); }
-                            else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'youtube'); }
-                            else if (menuSelection === 'right') { loadContent(activeMenuFrameId, 'tiktok'); }
+                            if (menuSelection === 'bottom') loadContent(activeMenuFrameId, 'instagram');
+                            else if (menuSelection === 'left') loadContent(activeMenuFrameId, 'youtube');
+                            else if (menuSelection === 'right') loadContent(activeMenuFrameId, 'tiktok');
                         } else if (menuState === 'SEARCHES') {
-                            if (menuSelection === 'top') { loadContent(activeMenuFrameId, 'google'); }
-                            else if (menuSelection === 'left') { loadContent(activeMenuFrameId, 'finder'); }
+                            if (menuSelection === 'top') loadContent(activeMenuFrameId, 'google');
+                            else if (menuSelection === 'left') loadContent(activeMenuFrameId, 'finder');
                         }
                     }
-
-                    // Always close menu on release
+                    
                     hideMenu();
                     menuState = 'CLOSED';
                     menuSelection = null;
@@ -954,33 +956,35 @@
             bubbles.right.style.display = 'flex';
             bubbles.bottom.style.display = 'flex';
 
+            const rDOM = '<div class="progress-ring"></div>';
+
             if (menuState === 'ROOT') {
                 bubbles.top.setAttribute('data-label', 'Searches');
-                bubbles.top.innerHTML = 'S';
+                bubbles.top.innerHTML = 'S' + rDOM;
                 bubbles.bottom.setAttribute('data-label', 'Apps');
-                bubbles.bottom.innerHTML = 'A';
+                bubbles.bottom.innerHTML = 'A' + rDOM;
                 bubbles.left.setAttribute('data-label', 'Minimize');
-                bubbles.left.innerHTML = '-';
+                bubbles.left.innerHTML = '-' + rDOM;
                 bubbles.right.setAttribute('data-label', 'Close');
-                bubbles.right.innerHTML = 'X<div class="progress-ring"></div>';
+                bubbles.right.innerHTML = 'X' + rDOM;
                 bubbles.right.style.borderColor = '#ff3b30';
                 bubbles.right.style.color = '#ff3b30';
             } else if (menuState === 'APPS') {
                 bubbles.top.setAttribute('data-label', 'Back');
-                bubbles.top.innerHTML = '↑';
+                bubbles.top.innerHTML = '↑' + rDOM;
                 bubbles.bottom.setAttribute('data-label', 'Instagram');
-                bubbles.bottom.innerHTML = 'I';
+                bubbles.bottom.innerHTML = 'I' + rDOM;
                 bubbles.left.setAttribute('data-label', 'YouTube');
-                bubbles.left.innerHTML = 'Y';
+                bubbles.left.innerHTML = 'Y' + rDOM;
                 bubbles.right.setAttribute('data-label', 'TikTok');
-                bubbles.right.innerHTML = 'T';
+                bubbles.right.innerHTML = 'T' + rDOM;
             } else if (menuState === 'SEARCHES') {
                 bubbles.bottom.setAttribute('data-label', 'Back');
-                bubbles.bottom.innerHTML = '↓';
+                bubbles.bottom.innerHTML = '↓' + rDOM;
                 bubbles.top.setAttribute('data-label', 'Google');
-                bubbles.top.innerHTML = 'G';
+                bubbles.top.innerHTML = 'G' + rDOM;
                 bubbles.left.setAttribute('data-label', 'Finder');
-                bubbles.left.innerHTML = 'F';
+                bubbles.left.innerHTML = 'F' + rDOM;
                 // User requested ONLY TWO options (Google & Finder) meaning right bubble is empty/hidden
                 bubbles.right.style.display = 'none';
             }
@@ -1026,7 +1030,11 @@
                 const x = 50 + 50 * Math.tan((p - 1) * Math.PI * 4);
                 path = `polygon(50% 50%, 50% 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x}% 0)`;
             }
-            bubbles.right.querySelector('.progress-ring').style.clipPath = path;
+            const ring = bubbles.right.querySelector('.progress-ring');
+            if (ring) {
+                ring.style.background = `rgba(255, 59, 48, 0.8)`;
+                ring.style.clipPath = path;
+            }
         }
 
         function minimizeWindow(id) {
