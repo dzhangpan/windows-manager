@@ -72,8 +72,15 @@
         }
 
         .window-frame.active {
-            box-shadow: 0 0 20px var(--neon-blue);
+            box-shadow: 0 0 30px var(--neon-blue);
             border-color: var(--neon-blue);
+            z-index: 100;
+        }
+
+        .window-frame.gazing-resize .resize-handle {
+            background: rgba(255, 255, 255, 0.8);
+            transform: scale(1.4);
+            box-shadow: 0 0 15px white;
         }
 
         .window-frame iframe {
@@ -323,6 +330,7 @@
         let movingFrameId = null;
         let resizingFrameId = null;
         let moveOffset = { x: 0, y: 0 };
+        let topZ = 10;
 
         const TICK_RATE = 30;
         const HOLD_CLOSE = 5 * TICK_RATE;
@@ -469,6 +477,18 @@
                 virtualCursor.style.display = 'block';
                 virtualCursor.style.left = (hR.pointPos.x - 10) + 'px';
                 virtualCursor.style.top = (hR.pointPos.y - 10) + 'px';
+                
+                // Gaze detection for windows
+                frames.forEach(f => {
+                    const el = document.getElementById(f.id);
+                    if (!el) return;
+                    
+                    const handleX = f.x + f.w;
+                    const handleY = f.y + f.h;
+                    const distToCursor = Math.sqrt(Math.pow(hR.pointPos.x - handleX, 2) + Math.pow(hR.pointPos.y - handleY, 2));
+                    
+                    el.classList.toggle('gazing-resize', distToCursor < 60);
+                });
                 
                 // === THUMB+INDEX: Instant Tap/Click (fires on release edge) ===
                 if (hR.pinching) {
@@ -682,10 +702,22 @@
         function simulateClick(x, y) {
             const el = document.elementFromPoint(x, y);
             if (!el) return;
-            const clickEvent = new MouseEvent('click', {
+            
+            // Handle Window Focus
+            const winFrame = el.closest('.window-frame');
+            if (winFrame) {
+                topZ += 1;
+                winFrame.style.zIndex = topZ;
+                document.querySelectorAll('.window-frame').forEach(wf => wf.classList.remove('active'));
+                winFrame.classList.add('active');
+            }
+
+            const mouseParams = {
                 view: window, bubbles: true, cancelable: true, clientX: x, clientY: y
-            });
-            el.dispatchEvent(clickEvent);
+            };
+            el.dispatchEvent(new MouseEvent('mousedown', mouseParams));
+            el.dispatchEvent(new MouseEvent('mouseup', mouseParams));
+            el.dispatchEvent(new MouseEvent('click', mouseParams));
             
             // Visual feedback
             const marker = document.createElement('div');
